@@ -10,11 +10,12 @@
   padding-right: calc(16px + var(--safe-right));
   padding-bottom: calc(16px + var(--safe-bottom));
   padding-left: calc(16px + var(--safe-left));
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
@@ -244,16 +245,43 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   background: var(--surface-container);
-  border-radius: 20px;
-  padding: 12px 16px;
+  border-radius: 16px;
+  padding: 8px 12px;
 }
 
-.raceMeter {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.raceHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.raceHead > :first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raceHead > :last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.raceStatus {
+  font-weight: 700;
+}
+
+.raceTracks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .raceLabel {
@@ -265,7 +293,7 @@
 }
 
 .raceTrack {
-  height: 8px;
+  height: 4px;
   border-radius: 99px;
   background: var(--grid-line);
   overflow: hidden;
