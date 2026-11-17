@@ -1,7 +1,7 @@
 "use client";
 
 import { clearCell, resetProgress, setUserValue, toggleHint } from '@/sudoku/cells';
-import { DailyChallenge, parseStartParam } from '@/sudoku/daily';
+import { buildStartParam, DailyChallenge, parseStartParam } from '@/sudoku/daily';
 import { GhostRace, parseDuelId } from '@/sudoku/duel';
 import { loadDailyPuzzle, loadLevelPuzzle, loadPuzzle } from '@/sudoku/loadPuzzle';
 import { Copy } from '@/i18n';
@@ -12,14 +12,16 @@ import { isSolved } from '@/sudoku/rules';
 import { ScoreMark, difficultyMultiplier, finalScore, missedStake, shownTotal, stakeAt } from '@/sudoku/score';
 import {
   clearStoredSession,
+  isDroppedChallenge,
   loadDeviceSnapshot,
   loadSettings,
   loadStoredSession,
+  rememberDroppedChallenge,
   saveSettings,
   saveStoredSession,
 } from '@/sudoku/storage';
 import { Digit, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from '@/sudoku/types';
-import { createDuel, fetchDuel, reportDuelResult } from '@/telegram/duelClient';
+import { createDuel, fetchDuel, forfeitDuel, reportDuelResult } from '@/telegram/duelClient';
 import { fetchMatchState, reportMatchResult } from '@/telegram/matchClient';
 import {
   hapticImpact,
@@ -69,6 +71,8 @@ export default function GameWrapper() {
   const [undoCount, setUndoCount] = useState(0);
   const [marks, setMarks] = useState<ScoreMark[]>(session.marks);
   const [award, setAward] = useState<{ stake: number; key: number } | null>(null);
+  const [closedChallenge, setClosedChallenge] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<PendingLeave>(null);
 
   const timeRef = useRef(time);
   const boardRef = useRef(board);
@@ -163,6 +167,10 @@ export default function GameWrapper() {
     if (!storageReady || challengeLaunchStarted.current) return;
     challengeLaunchStarted.current = true;
     const param = readStartParam();
+    if (param && isDroppedChallenge(param)) {
+      if (!boardRef.current) setClosedChallenge(true);
+      return;
+    }
     const duelId = parseDuelId(param);
     if (duelId) {
       if (ghostRef.current?.id === duelId && boardRef.current) return;
@@ -238,6 +246,7 @@ export default function GameWrapper() {
         cellsToFill(current.cells),
         timeRef.current,
         paceRef.current,
+        settingsRef.current,
       );
       if (cancelled || !race) return;
       setGroupLeader(race.leader);
@@ -256,7 +265,7 @@ export default function GameWrapper() {
     if (!storageReady || gameState !== 'playing' || !matchId) return;
     let cancelled = false;
     const send = async () => {
-      const race = await fetchMatchState();
+      const race = await fetchMatchState(settingsRef.current);
       if (cancelled || !race) return;
       setMatchLeader(race.leader);
     };
@@ -297,16 +306,74 @@ export default function GameWrapper() {
   }, [persist]);
 
   const handleSettingChange = (setting: keyof GameSettingsType) => {
-    setSettings(current => {
-      const next = { ...current, [setting]: !current[setting] };
-      if (!ghostRef.current) saveSettings(next);
-      return next;
-    });
+    const next = { ...settingsRef.current, [setting]: !settingsRef.current[setting] };
+    requestSettings(next);
   };
 
   const handleSettingsApply = (next: GameSettingsType) => {
+    requestSettings(next);
+  };
+
+  const challengeOpen = () => Boolean(ghostRef.current || challengeRef.current || matchIdRef.current);
+
+  const requestSettings = (next: GameSettingsType) => {
+    if (sameSettings(settingsRef.current, next)) return;
+    if (challengeOpen()) {
+      setPendingLeave({ kind: 'settings', next });
+      return;
+    }
     setSettings(next);
-    if (!ghostRef.current) saveSettings(next);
+    saveSettings(next);
+  };
+
+  const dropActiveChallenge = () => {
+    const param = readStartParam();
+    if (param) rememberDroppedChallenge(param);
+    const race = ghostRef.current;
+    if (race) {
+      rememberDroppedChallenge(`d${race.id}`);
+      void forfeitDuel(race.id);
+    }
+    if (matchIdRef.current) {
+      rememberDroppedChallenge(`i${matchIdRef.current}`);
+      void fetchMatchState(settingsRef.current, true);
+    }
+    const daily = challengeRef.current;
+    const current = boardRef.current;
+    if (daily) {
+      rememberDroppedChallenge(buildStartParam(daily));
+      if (current) {
+        void syncGroupRace(
+          cellsLeft(current.cells),
+          cellsToFill(current.cells),
+          timeRef.current,
+          paceRef.current,
+          settingsRef.current,
+          true,
+        );
+      }
+    }
+    setGhost(null);
+    setChallenge(null);
+    setMatchId(null);
+    setGroupLeader(null);
+    setGroupPlayers([]);
+    setLiveRival(null);
+    setMatchLeader(null);
+  };
+
+  const confirmPending = () => {
+    const pending = pendingLeave;
+    if (!pending) return;
+    dropActiveChallenge();
+    if (pending.kind === 'settings') {
+      setSettings(pending.next);
+      saveSettings(pending.next);
+    } else {
+      beginNewGame();
+    }
+    setPendingLeave(null);
+    setIsSettingsOpen(false);
   };
 
   const forgetMoves = () => {
@@ -356,6 +423,14 @@ export default function GameWrapper() {
   };
 
   const handleNewGame = () => {
+    if (challengeOpen()) {
+      setPendingLeave({ kind: 'newGame' });
+      return;
+    }
+    beginNewGame();
+  };
+
+  const beginNewGame = () => {
     clearStoredSession();
     paceRef.current = [];
     forgetMoves();
@@ -468,7 +543,6 @@ export default function GameWrapper() {
     paceRef.current = [];
     forgetMoves();
     setBoard(current => current ? { ...current, cells: current.cells.map(resetProgress) } : current);
-    setTime(0);
     setGameState('playing');
   };
 
@@ -555,7 +629,7 @@ export default function GameWrapper() {
     setTime(0);
     clearStoredSession();
     try {
-      const race = await fetchMatchState();
+      const race = await fetchMatchState(settingsRef.current);
       if (!race) throw new Error('The shared puzzle is unavailable');
       const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
       setMatchLeader(race.leader);
@@ -643,6 +717,9 @@ export default function GameWrapper() {
         </button>
       </div>
 
+      {closedChallenge && (
+        <p className={styles.notice}>{text.challengeClosed}</p>
+      )}
       {challenge && activeBoard && (
         <p className={styles.notice}>{text.chatPuzzle(text.difficulties[challenge.difficulty])}</p>
       )}
@@ -780,6 +857,24 @@ export default function GameWrapper() {
         </>
       )}
 
+      {pendingLeave && (
+        <div className={`${styles.scrim} ${styles.confirmScrim}`} onMouseDown={() => setPendingLeave(null)}>
+          <div
+            className={styles.confirm}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="drop-challenge-title"
+            onMouseDown={event => event.stopPropagation()}
+          >
+            <h2 id="drop-challenge-title" className={styles.confirmTitle}>{text.dropChallengeTitle}</h2>
+            <p className={styles.notice}>{text.dropChallenge}</p>
+            <div className={styles.actions}>
+              <Pill primary onClick={confirmPending}>{text.failChallenge}</Pill>
+              <Pill onClick={() => setPendingLeave(null)}>{text.keepChallenge}</Pill>
+            </div>
+          </div>
+        </div>
+      )}
       {isSettingsOpen && (
         <div className={styles.scrim} onMouseDown={() => setIsSettingsOpen(false)}>
           <div
@@ -801,6 +896,12 @@ export default function GameWrapper() {
     </div>
   );
 }
+
+function sameSettings(left: GameSettingsType, right: GameSettingsType): boolean {
+  return (Object.keys(left) as (keyof GameSettingsType)[]).every(key => left[key] === right[key]);
+}
+
+type PendingLeave = { kind: 'settings'; next: GameSettingsType } | { kind: 'newGame' } | null;
 
 function Pill({
   primary = false,

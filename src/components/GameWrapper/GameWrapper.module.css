@@ -155,6 +155,26 @@
   padding: 16px;
 }
 
+.confirmScrim {
+  z-index: 1100;
+}
+
+.confirm {
+  background: var(--header-bg);
+  color: var(--foreground);
+  border-radius: 28px;
+  width: min(400px, 100%);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: 20px;
+}
+
 .sheet {
   background: var(--header-bg);
   color: var(--foreground);

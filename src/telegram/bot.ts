@@ -12,7 +12,7 @@ import { playLink, renderCard, renderMatch, formatJoined, formatSeconds } from '
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
-import { acceptDuel, bindDuelMessage, DuelGuest, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
+import { acceptDuel, bindDuelMessage, DuelGuest, forfeitDuelGuest, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
 import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
@@ -338,7 +338,7 @@ function startScoreServer(): http.Server {
 
 async function handleProgress(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown };
+    const body = await readJson(req) as { initData?: unknown; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown; settings?: unknown; forfeit?: unknown };
     const initData = typeof body.initData === 'string' ? body.initData : '';
     const signed = readSignedInitData(initData, token);
     const challenge = signed ? parseStartParam(signed.startParam) : null;
@@ -356,6 +356,7 @@ async function handleProgress(req: http.IncomingMessage, res: http.ServerRespons
       left,
       total,
       { seconds: typeof body.seconds === 'number' ? Math.floor(body.seconds) : 0, samples: body.samples },
+      { settings: body.settings, forfeit: body.forfeit === true },
     ));
     if (!update) {
       sendJson(res, 400, { ok: false });
@@ -465,15 +466,18 @@ async function editInlineMatch(match: StoredMatch): Promise<void> {
 
 async function handleMatchState(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; matchId?: unknown };
+    const body = await readJson(req) as { initData?: unknown; matchId?: unknown; settings?: unknown; forfeit?: unknown };
     const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
     const id = matchIdFrom(signed?.startParam, body.matchId);
     if (!signed || !id) {
       sendJson(res, 401, { ok: false });
       return;
     }
-    const noted = await noteMatchPlayer(id, signed.userId, signed.name);
-    if (noted?.added) await editInlineMatch(noted.match);
+    const noted = await noteMatchPlayer(id, signed.userId, signed.name, {
+      settings: body.settings,
+      forfeit: body.forfeit === true,
+    });
+    if (noted?.changed) await editInlineMatch(noted.match);
     const match = noted?.match ?? await readMatch(id);
     if (!match) {
       sendJson(res, 404, { ok: false });
@@ -593,7 +597,7 @@ async function handleDuelRead(id: string, res: http.ServerResponse): Promise<voi
 
 async function handleDuelResult(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; id?: unknown; seconds?: unknown };
+    const body = await readJson(req) as { initData?: unknown; id?: unknown; seconds?: unknown; forfeit?: unknown };
     const initData = typeof body.initData === 'string' ? body.initData : '';
     const signed = readSignedInitData(initData, token);
     const id = typeof body.id === 'string' ? body.id : '';
@@ -607,9 +611,27 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
       sendJson(res, 404, { ok: false });
       return;
     }
+    if (body.forfeit === true) {
+      const forfeited = await forfeitDuelGuest(id, signed.userId, signed.name);
+      if (forfeited) await editDuelMessage(forfeited);
+      sendJson(res, 200, { ok: true, beat: false });
+      return;
+    }
+    if (existing.guests?.some(guest => guest.userId === signed.userId && guest.forfeited)) {
+      sendJson(res, 200, { ok: false, beat: false });
+      return;
+    }
     const previousBest = existing.bestSeconds;
     const updated = await recordDuelResult(id, signed.userId, signed.name, seconds);
-    if (updated) await editDuelMessage(updated);
+    if (!updated) {
+      sendJson(res, 200, { ok: false, beat: false });
+      return;
+    }
+    await editDuelMessage(updated);
+    if (updated.guests?.some(guest => guest.userId === signed.userId && guest.forfeited)) {
+      sendJson(res, 200, { ok: false, beat: false });
+      return;
+    }
     const beat = seconds < existing.seconds && (previousBest === null || seconds < previousBest);
     if (beat && signed.userId !== existing.userId) {
       const copy = messages(cardLang(existing.lang));

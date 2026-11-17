@@ -2,8 +2,10 @@ import { createHash, randomBytes, randomInt } from 'crypto';
 import { mkdir, readFile, rename, writeFile } from 'fs/promises';
 import path from 'path';
 import { Lang } from '@/i18n';
+import { readSettingsSnapshot } from '@/sudoku/duel';
 import { PaceSample, sanitizePace } from '@/sudoku/pace';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from '@/sudoku/types';
+import { GameSettingsType } from '@/types';
 
 const MIN_SECONDS = 15;
 const MAX_SECONDS = 24 * 60 * 60;
@@ -14,6 +16,8 @@ export interface MatchEntry {
   userId: number;
   name: string;
   seconds: number;
+  startedAt?: number;
+  settings?: GameSettingsType;
 }
 
 export interface MatchLeader {
@@ -28,6 +32,8 @@ export interface MatchPresence {
   userId: number;
   name: string;
   startedAt: number;
+  settings?: GameSettingsType;
+  forfeited?: boolean;
 }
 
 export interface StoredMatch {
@@ -145,11 +151,16 @@ function newMatch(inlineMessageId: string, difficulty: SudokuGuruDifficulty, lan
   };
 }
 
-export async function noteMatchPlayer(id: string, userId: number, name: string): Promise<{ match: StoredMatch; added: boolean } | null> {
+export async function noteMatchPlayer(
+  id: string,
+  userId: number,
+  name: string,
+  extras?: { settings?: unknown; forfeit?: boolean },
+): Promise<{ match: StoredMatch; changed: boolean } | null> {
   const clean = name.replace(/\s+/g, ' ').trim().slice(0, 32);
   if (!/^[a-f0-9]{16}$/.test(id) || !clean) return null;
-  if (process.env.RECORDS_BACKEND === 'firestore') return noteFirestore(id, userId, clean);
-  return withFile(file => addPlayer(file.matches[id], userId, clean));
+  if (process.env.RECORDS_BACKEND === 'firestore') return noteFirestore(id, userId, clean, extras);
+  return withFile(file => addPlayer(file.matches[id], userId, clean, extras));
 }
 
 function applyResult(
@@ -160,12 +171,23 @@ function applyResult(
   pace?: { total: number; samples: unknown },
 ): MatchResult | null {
   if (!fresh(match) || !Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) return null;
+  if (match.present?.some(player => player.userId === userId && player.forfeited)) return null;
+  const presence = match.present?.find(player => player.userId === userId);
   const current = match.entries.find(entry => entry.userId === userId);
   const improved = !current || seconds < current.seconds;
-  if (!current) match.entries.push({ userId, name, seconds });
-  else if (improved) {
+  if (!current) {
+    match.entries.push({
+      userId,
+      name,
+      seconds,
+      ...(presence?.startedAt ? { startedAt: presence.startedAt } : {}),
+      ...(presence?.settings ? { settings: presence.settings } : {}),
+    });
+  } else if (improved) {
     current.seconds = seconds;
     current.name = name;
+    current.startedAt ??= presence?.startedAt;
+    if (!current.settings && presence?.settings) current.settings = presence.settings;
   }
   match.entries.sort((left, right) => left.seconds - right.seconds || left.userId - right.userId);
   match.present = (match.present ?? []).filter(player => player.userId !== userId);
@@ -246,26 +268,54 @@ async function openFirestore(inlineMessageId: string, difficulty: SudokuGuruDiff
   });
 }
 
-function addPlayer(match: StoredMatch | undefined, userId: number, name: string): { match: StoredMatch; added: boolean } | null {
+function addPlayer(
+  match: StoredMatch | undefined,
+  userId: number,
+  name: string,
+  extras?: { settings?: unknown; forfeit?: boolean },
+): { match: StoredMatch; changed: boolean } | null {
   if (!match || !fresh(match)) return null;
-  const present = match.present ?? [];
-  if (present.some(player => player.userId === userId)) {
+  const settings = readSettingsSnapshot(extras?.settings) ?? undefined;
+  const present = match.present ? [...match.present] : [];
+  const existing = present.find(player => player.userId === userId);
+  if (existing) {
+    existing.name = name;
+    let changed = false;
+    if (extras?.forfeit && !existing.forfeited) {
+      existing.forfeited = true;
+      changed = true;
+    }
+    if (!existing.settings && settings) {
+      existing.settings = settings;
+      changed = true;
+    }
     match.present = present;
-    return { match, added: false };
+    return { match, changed };
   }
-  match.present = [...present, { userId, name, startedAt: Date.now() }];
-  return { match, added: true };
+  match.present = [...present, {
+    userId,
+    name,
+    startedAt: Date.now(),
+    ...(settings ? { settings } : {}),
+    ...(extras?.forfeit ? { forfeited: true } : {}),
+  }];
+  return { match, changed: true };
 }
 
-async function noteFirestore(id: string, userId: number, name: string): Promise<{ match: StoredMatch; added: boolean } | null> {
+async function noteFirestore(
+  id: string,
+  userId: number,
+  name: string,
+  extras?: { settings?: unknown; forfeit?: boolean },
+): Promise<{ match: StoredMatch; changed: boolean } | null> {
   const { Firestore } = await import('@google-cloud/firestore');
   const ref = new Firestore().doc(`matches/${id}`);
   return ref.firestore.runTransaction(async transaction => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) return null;
-    const next = addPlayer(snapshot.data() as StoredMatch, userId, name);
+    const next = addPlayer(snapshot.data() as StoredMatch, userId, name, extras);
     if (!next) return null;
-    transaction.set(ref, next.match);
+    if (next.changed) transaction.set(ref, next.match);
     return next;
   });
 }

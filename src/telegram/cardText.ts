@@ -1,6 +1,8 @@
 import { cardLang, messages } from '@/i18n';
 import { buildStartParam } from '@/sudoku/daily';
+import { settingsNickname } from '@/sudoku/nicknames';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
+import { GameSettingsType } from '@/types';
 import { ChallengeCard, ChatRecord } from './records';
 
 export function renderCard(card: ChallengeCard, record: ChatRecord | null): string {
@@ -13,7 +15,7 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
   if (joined.length > 0) {
     lines.push(text.joined);
     joined.slice(0, 10).forEach(player => {
-      lines.push(`• ${player.name} — ${formatJoined(player.joinedAt)}`);
+      lines.push(`• ${player.name} — ${formatJoined(player.joinedAt)}${settingsLabel(player.settings, card.lang)}`);
     });
     if (joined.length > 10) lines.push(text.more(joined.length - 10));
     lines.push('');
@@ -34,8 +36,8 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
 export function renderMatch(
   lang: ReturnType<typeof cardLang>,
   difficulty: SudokuGuruDifficulty,
-  entries: { name: string; seconds: number }[],
-  playing: { name: string; startedAt?: number }[] = [],
+  entries: { name: string; seconds: number; startedAt?: number; settings?: GameSettingsType }[],
+  playing: { name: string; startedAt?: number; settings?: GameSettingsType }[] = [],
 ): string {
   const text = messages(lang);
   const lines = [`Sudoku · ${text.difficulties[difficulty]}`, ''];
@@ -43,14 +45,15 @@ export function renderMatch(
     lines.push(text.joined);
     playing.slice(0, 10).forEach(player => {
       const when = player.startedAt ? ` — ${formatJoined(player.startedAt)}` : '';
-      lines.push(`• ${player.name}${when}`);
+      lines.push(`• ${player.name}${when}${settingsLabel(player.settings, lang)}`);
     });
     lines.push('');
   }
   if (entries.length === 0) lines.push(text.nobody);
   else {
     entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`${index + 1}. ${entry.name} — ${formatSeconds(entry.seconds)}`);
+      const started = entry.startedAt ? `${formatJoined(entry.startedAt)} · ` : '';
+      lines.push(`${index + 1}. ${entry.name} — ${started}${formatSeconds(entry.seconds)}${settingsLabel(entry.settings, lang)}`);
     });
     if (entries.length > 10) lines.push(text.more(entries.length - 10));
   }
@@ -84,6 +87,11 @@ export function formatSeconds(totalSeconds: number): string {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function settingsLabel(settings: GameSettingsType | undefined, lang: string | undefined): string {
+  if (!settings) return '';
+  return ` · ${settingsNickname(settings, cardLang(lang))}`;
 }
 
 function formatDay(day: string, months: string[]): string {

@@ -3,6 +3,8 @@ import { randomBytes } from 'crypto';
 import path from 'path';
 import { Lang } from '@/i18n';
 import { DailyChallenge, todayKey } from '@/sudoku/daily';
+import { readSettingsSnapshot } from '@/sudoku/duel';
+import { GameSettingsType } from '@/types';
 import { PaceSample, paceAt, pacePercent, sanitizePace } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 
@@ -47,6 +49,8 @@ export interface CardJoiner {
   userId: number;
   name: string;
   joinedAt: number;
+  settings?: GameSettingsType;
+  forfeited?: boolean;
 }
 
 export interface RacePlayer {
@@ -148,6 +152,9 @@ export function recordScore(
   if (card.day !== challenge.day || card.difficulty !== challenge.difficulty) {
     return { ok: false, reason: 'mismatch' };
   }
+  if (card.joined?.some(player => player.userId === userId && player.forfeited)) {
+    return { ok: false, reason: 'time' };
+  }
 
   const current = card.entries.find(entry => entry.userId === userId);
   const improved = !current || seconds < current.seconds;
@@ -196,6 +203,7 @@ export function touchProgress(
   left: number,
   total: number,
   pace?: { seconds: number; samples: unknown },
+  extras?: { settings?: unknown; forfeit?: boolean },
 ): ProgressUpdate | null {
   if (!Number.isInteger(left) || !Number.isInteger(total) || total < 1 || total > 81 || left < 0 || left > total) {
     return null;
@@ -209,8 +217,24 @@ export function touchProgress(
   card.joined ??= [];
   const known = card.joined.find(player => player.userId === userId);
   const joined = !known;
-  if (known) known.name = name;
-  else card.joined.push({ userId, name, joinedAt: now });
+  const settings = readSettingsSnapshot(extras?.settings) ?? undefined;
+  let settingsAttached = false;
+  if (known) {
+    known.name = name;
+    if (extras?.forfeit) known.forfeited = true;
+    if (!known.settings && settings) {
+      known.settings = settings;
+      settingsAttached = true;
+    }
+  } else {
+    card.joined.push({
+      userId,
+      name,
+      joinedAt: now,
+      ...(settings ? { settings } : {}),
+      ...(extras?.forfeit ? { forfeited: true } : {}),
+    });
+  }
   card.live ??= [];
   const existing = card.live.find(item => item.userId === userId);
   const seconds = pace && Number.isInteger(pace.seconds) && pace.seconds >= 0 && pace.seconds <= MAX_SECONDS
@@ -250,7 +274,7 @@ export function touchProgress(
     chatId: located.chatId,
     card,
     record: located.chat.records[card.difficulty] ?? null,
-    joined,
+    joined: joined || settingsAttached,
   };
 }
 

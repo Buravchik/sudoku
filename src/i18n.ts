@@ -75,6 +75,11 @@ export interface Copy {
   noun: string;
   namedSettings: string;
   namedSettingsHint: string;
+  dropChallengeTitle: string;
+  dropChallenge: string;
+  failChallenge: string;
+  keepChallenge: string;
+  challengeClosed: string;
   beat: (name: string, difficulty: string, theirs: string, yours: string) => string;
   cmdStart: string;
   cmdSudoku: string;
@@ -169,6 +174,11 @@ const copy: Record<Lang, Copy> = {
     noun: 'Noun',
     namedSettings: 'Named Settings',
     namedSettingsHint: 'Each name is one complete set of these checkboxes. A challenge card shows the name, and the other player gets the same options.',
+    dropChallengeTitle: 'Fail this challenge?',
+    dropChallenge: 'These options belong to the challenge. Changing them fails it, and this challenge cannot be started again.',
+    failChallenge: 'Fail the challenge',
+    keepChallenge: 'Keep playing',
+    challengeClosed: 'This challenge was already started. It cannot be opened again.',
     beat: (name, difficulty, theirs, yours) => `${name} solved your ${difficulty} puzzle in ${theirs}. Your time was ${yours}.`,
     cmdStart: 'Play Sudoku',
     cmdSudoku: 'Today’s puzzle and chat records',
@@ -261,6 +271,11 @@ const copy: Record<Lang, Copy> = {
     noun: 'Существительное',
     namedSettings: 'Именованные настройки',
     namedSettingsHint: 'Имя — это весь набор этих галочек. В карточке челленджа стоит имя, и соперник получает те же настройки.',
+    dropChallengeTitle: 'Провалить челлендж?',
+    dropChallenge: 'Эти настройки относятся к челленджу. Если их поменять, челлендж будет провален, и начать его заново нельзя.',
+    failChallenge: 'Провалить',
+    keepChallenge: 'Остаться',
+    challengeClosed: 'Этот челлендж уже начат. Открыть его заново нельзя.',
     beat: (name, difficulty, theirs, yours) => `${name} прошёл твой уровень ${difficulty} за ${theirs}. Твоё время — ${yours}.`,
     cmdStart: 'Играть в судоку',
     cmdSudoku: 'Сегодняшняя сетка и рекорды чата',

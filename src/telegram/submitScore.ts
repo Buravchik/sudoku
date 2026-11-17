@@ -1,4 +1,5 @@
 import { PaceSample, compactPaceForSend, sanitizePace } from '@/sudoku/pace';
+import { GameSettingsType } from '@/types';
 
 export interface GroupLeader {
   name: string;
@@ -62,6 +63,8 @@ export async function syncGroupRace(
   total: number,
   seconds: number,
   samples: PaceSample[],
+  settings?: GameSettingsType,
+  forfeit = false,
 ): Promise<{ leader: GroupLeader | null; players: GroupPlayer[]; rival: LiveRival | null } | null> {
   const url = process.env.NEXT_PUBLIC_SCORE_URL?.replace(/\/score\/?$/, '/progress');
   const initData = window.Telegram?.WebApp?.initData;
@@ -70,7 +73,15 @@ export async function syncGroupRace(
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, left, total, seconds, samples: compactPaceForSend(samples) }),
+      body: JSON.stringify({
+        initData,
+        left,
+        total,
+        seconds,
+        samples: compactPaceForSend(samples),
+        settings,
+        forfeit,
+      }),
     });
     if (!response.ok) return null;
     const payload = await response.json() as { ok?: boolean; leader?: GroupLeader | null; players?: GroupPlayer[]; rival?: LiveRival | null };

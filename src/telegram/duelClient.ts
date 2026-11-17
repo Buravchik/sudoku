@@ -62,6 +62,21 @@ export async function fetchDuel(id: string): Promise<GhostRace | null> {
   }
 }
 
+export async function forfeitDuel(id: string): Promise<void> {
+  const base = apiBase();
+  const initData = window.Telegram?.WebApp?.initData;
+  if (!base || !initData) return;
+  try {
+    await fetch(`${base}/duel/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData, id, forfeit: true }),
+    });
+  } catch (error) {
+    console.error('Failed to leave the challenge.', error);
+  }
+}
+
 export async function reportDuelResult(id: string, seconds: number): Promise<void> {
   const base = apiBase();
   const initData = window.Telegram?.WebApp?.initData;

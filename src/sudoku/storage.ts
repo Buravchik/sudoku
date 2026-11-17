@@ -199,6 +199,29 @@ export function clearStoredSession(): void {
   removeDeviceItem(GAME_KEY);
 }
 
+const DROPPED_KEY = 'sudokuDroppedChallenges';
+
+export function isDroppedChallenge(id: string): boolean {
+  return droppedChallenges().includes(id);
+}
+
+export function rememberDroppedChallenge(id: string): void {
+  if (typeof window === 'undefined' || !id) return;
+  const current = droppedChallenges();
+  if (current.includes(id)) return;
+  localStorage.setItem(DROPPED_KEY, JSON.stringify([...current, id].slice(-50)));
+}
+
+function droppedChallenges(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DROPPED_KEY) ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
 interface StoredGameState {
   gameState: 'playing' | 'won';
   difficultyState: SudokuGuruDifficulty | '';

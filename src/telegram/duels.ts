@@ -15,6 +15,7 @@ export interface DuelGuest {
   name: string;
   seconds: number | null;
   joinedAt?: number;
+  forfeited?: boolean;
 }
 
 export interface StoredDuel extends GhostRace {
@@ -111,6 +112,25 @@ export async function noteDuelGuest(id: string, userId: number, name: string): P
   });
 }
 
+export async function forfeitDuelGuest(id: string, userId: number, name: string): Promise<StoredDuel | null> {
+  if (!Number.isInteger(userId) || userId <= 0) return null;
+  const guestName = name.replace(/\s+/g, ' ').trim().slice(0, 32);
+  if (!guestName) return null;
+  return updateDuel(id, duel => {
+    if (duel.userId === userId) return duel;
+    const guests = duel.guests ? [...duel.guests] : [];
+    const existing = guests.find(guest => guest.userId === userId);
+    if (existing) {
+      existing.name = guestName;
+      existing.forfeited = true;
+      existing.joinedAt ??= Date.now();
+      return { ...duel, guests };
+    }
+    guests.push({ userId, name: guestName, seconds: null, joinedAt: Date.now(), forfeited: true });
+    return { ...duel, guests };
+  });
+}
+
 export async function recordDuelResult(id: string, userId: number, name: string, seconds: number): Promise<StoredDuel | null> {
   if (!Number.isInteger(userId) || userId <= 0) return null;
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_SECONDS) return null;
@@ -120,6 +140,7 @@ export async function recordDuelResult(id: string, userId: number, name: string,
     if (duel.userId === userId) return { ...duel, bestSeconds };
     const guests = (duel.guests ?? []).filter(guest => guest.userId !== userId);
     const previousGuest = duel.guests?.find(guest => guest.userId === userId);
+    if (previousGuest?.forfeited) return duel;
     const previous = previousGuest?.seconds ?? null;
     const guestSeconds = previous !== null && previous <= seconds ? previous : seconds;
     guests.push({

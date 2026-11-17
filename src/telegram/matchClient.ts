@@ -1,5 +1,6 @@
 import { compactPaceForSend, PaceSample } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
+import { GameSettingsType } from '@/types';
 import { readStartParam } from './webApp';
 
 export interface MatchLeader {
@@ -20,7 +21,7 @@ function endpoint(suffix: string): string | null {
   return url || null;
 }
 
-export async function fetchMatchState(): Promise<MatchState | null> {
+export async function fetchMatchState(settings?: GameSettingsType, forfeit = false): Promise<MatchState | null> {
   const url = endpoint('/match/state');
   const initData = window.Telegram?.WebApp?.initData;
   if (!url || !initData) return null;
@@ -28,7 +29,7 @@ export async function fetchMatchState(): Promise<MatchState | null> {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, matchId: readStartParam() }),
+      body: JSON.stringify({ initData, matchId: readStartParam(), settings, forfeit }),
     });
     if (!response.ok) return null;
     const payload = await response.json() as { ok?: boolean; difficulty?: SudokuGuruDifficulty; level?: number; leader?: MatchLeader | null };
