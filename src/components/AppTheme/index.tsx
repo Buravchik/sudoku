@@ -1,18 +1,7 @@
 "use client";
 
 import { telegramWebApp } from '@/telegram/webApp';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { ReactNode, useEffect } from 'react';
-
-const theme = createTheme({
-  cssVariables: {
-    colorSchemeSelector: 'class',
-  },
-  colorSchemes: {
-    light: true,
-    dark: true,
-  },
-});
 
 export default function AppTheme({ children }: { children: ReactNode }) {
   useEffect(() => {
@@ -33,5 +22,5 @@ export default function AppTheme({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return <ThemeProvider theme={theme}>{children}</ThemeProvider>;
+  return children;
 }

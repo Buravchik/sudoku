@@ -10,4 +10,7 @@ export interface GameSettingsType {
   highlightQuadrantsWithSameNumber: boolean;
   highlightAllObviousCells: boolean;
   highlightObviousCellsForCurrentNumber: boolean;
+  undoMoves: boolean;
+  highlightConflicts: boolean;
+  countMistakes: boolean;
 }

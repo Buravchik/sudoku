@@ -43,12 +43,19 @@ export interface Copy {
   tied: (name: string) => string;
   pencil: string;
   clear: string;
-  shareSolved: (difficulty: string, time: string) => string;
-  shareChallenge: (difficulty: string, time: string) => string;
+  undo: string;
+  mistakes: (n: number) => string;
+  score: (n: number) => string;
+  scoreResult: (shown: number, missed: number, multiplier: number, final: number) => string;
+  digitsOverTime: string;
+  pointsOverTime: string;
+  shareSolved: (difficulty: string, time: string, score: number) => string;
+  shareChallenge: (difficulty: string, time: string, settings: string, score: number) => string;
   difficulties: Record<SudokuGuruDifficulty, string>;
   settingLabels: Record<keyof GameSettingsType, string>;
   months: string[];
   play: string;
+  beatRecord: string;
   dropInChat: string;
   nobody: string;
   playing: string;
@@ -59,8 +66,12 @@ export interface Copy {
   difficultyHint: string;
   inlineDescription: string;
   challengeTitle: (difficulty: string) => string;
+  challengeFrom: (name: string, difficulty: string) => string;
   preparedLine: string;
   preparedDescription: string;
+  settingsNamed: (name: string) => string;
+  adjective: string;
+  noun: string;
   beat: (name: string, difficulty: string, theirs: string, yours: string) => string;
   cmdStart: string;
   cmdSudoku: string;
@@ -100,8 +111,16 @@ const copy: Record<Lang, Copy> = {
     tied: name => ` Tied with ${name}.`,
     pencil: 'Pencil mode',
     clear: 'Clear',
-    shareSolved: (difficulty, time) => `Solved ${difficulty} sudoku in ${time}.`,
-    shareChallenge: (difficulty, time) => `Sudoku · ${difficulty} · ${time}. Same puzzle and settings: at your second you see how many digits I had left.`,
+    undo: 'Undo',
+    mistakes: n => `Mistakes: ${n}`,
+    score: n => `Score: ${n}`,
+    scoreResult: (shown, missed, multiplier, final) => `Along the way ${shown}. Misses −${missed}. Difficulty ×${multiplier}. Final ${final}.`,
+    digitsOverTime: 'Digits over time',
+    pointsOverTime: 'Points over time',
+    shareSolved: (difficulty, time, score) => difficulty
+      ? `Sudoku · ${difficulty} · ${time}. Score ${score}.`
+      : `Sudoku · ${time}. Score ${score}.`,
+    shareChallenge: (difficulty, time, settings, score) => `Sudoku · ${difficulty} · ${time}. Score ${score}. ${settings}. At your second you see how many digits I had left.`,
     difficulties: {
       easy: 'Easy',
       medium: 'Medium',
@@ -121,9 +140,13 @@ const copy: Record<Lang, Copy> = {
       highlightQuadrantsWithSameNumber: 'Highlight blocks that contain the same number',
       highlightAllObviousCells: 'Highlight every obvious cell',
       highlightObviousCellsForCurrentNumber: 'Highlight obvious cells for the selected number',
+      undoMoves: 'Undo',
+      highlightConflicts: 'Highlight conflicts with the solution',
+      countMistakes: 'Count mistakes',
     },
     months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
     play: 'Play',
+    beatRecord: 'Beat the record',
     dropInChat: 'Drop in a chat',
     nobody: 'No one has finished yet.',
     playing: 'Playing',
@@ -134,8 +157,12 @@ const copy: Record<Lang, Copy> = {
     difficultyHint: 'Difficulty: easy, medium, hard, expert, or guru.',
     inlineDescription: 'One puzzle for everyone. This message keeps the ranking.',
     challengeTitle: difficulty => `Challenge · ${difficulty}`,
-    preparedLine: 'Same puzzle and the same settings. At your second, you see how many digits I had left.',
+    challengeFrom: (name, difficulty) => `Challenge from ${name} · ${difficulty}`,
+    preparedLine: 'At your second you see how many digits I had left.',
     preparedDescription: 'Same puzzle, settings, and pace',
+    settingsNamed: name => `Settings: ${name}`,
+    adjective: 'Adjective',
+    noun: 'Noun',
     beat: (name, difficulty, theirs, yours) => `${name} solved your ${difficulty} puzzle in ${theirs}. Your time was ${yours}.`,
     cmdStart: 'Play Sudoku',
     cmdSudoku: 'Today’s puzzle and chat records',
@@ -173,8 +200,16 @@ const copy: Record<Lang, Copy> = {
     tied: name => ` Ничья с ${name}.`,
     pencil: 'Карандаш',
     clear: 'Стереть',
-    shareSolved: (difficulty, time) => `Решил судоку ${difficulty} за ${time}.`,
-    shareChallenge: (difficulty, time) => `Судоку · ${difficulty} · ${time}. Тот же уровень и те же настройки: на твоей секунде видно, сколько цифр оставалось у меня.`,
+    undo: 'Отменить ход',
+    mistakes: n => `Ошибки: ${n}`,
+    score: n => `Очки: ${n}`,
+    scoreResult: (shown, missed, multiplier, final) => `По ходу ${shown}. Промахи −${missed}. Сложность ×${multiplier}. Итог ${final}.`,
+    digitsOverTime: 'Цифры по времени',
+    pointsOverTime: 'Очки по времени',
+    shareSolved: (difficulty, time, score) => difficulty
+      ? `Судоку · ${difficulty} · ${time}. Очки ${score}.`
+      : `Судоку · ${time}. Очки ${score}.`,
+    shareChallenge: (difficulty, time, settings, score) => `Судоку · ${difficulty} · ${time}. Очки ${score}. ${settings}. На твоей секунде видно, сколько цифр оставалось у меня.`,
     difficulties: {
       easy: 'Лёгкая',
       medium: 'Средняя',
@@ -194,9 +229,13 @@ const copy: Record<Lang, Copy> = {
       highlightQuadrantsWithSameNumber: 'Подсвечивать блоки с этой цифрой',
       highlightAllObviousCells: 'Подсвечивать все очевидные клетки',
       highlightObviousCellsForCurrentNumber: 'Подсвечивать очевидные клетки для выбранной цифры',
+      undoMoves: 'Отмена хода',
+      highlightConflicts: 'Подсвечивать конфликт с решением',
+      countMistakes: 'Считать ошибки',
     },
     months: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
     play: 'Играть',
+    beatRecord: 'Побить рекорд',
     dropInChat: 'В другой чат',
     nobody: 'Пока никто не решил.',
     playing: 'Играют',
@@ -207,8 +246,12 @@ const copy: Record<Lang, Copy> = {
     difficultyHint: 'Сложность: easy, medium, hard, expert или guru.',
     inlineDescription: 'Одна сетка на всех. Это сообщение само ведёт таблицу.',
     challengeTitle: difficulty => `Вызов · ${difficulty}`,
-    preparedLine: 'Тот же уровень и те же настройки. На твоей секунде видно, сколько цифр оставалось у меня.',
+    challengeFrom: (name, difficulty) => `Вызов от ${name} · ${difficulty}`,
+    preparedLine: 'На твоей секунде видно, сколько цифр оставалось у меня.',
     preparedDescription: 'Тот же уровень, настройки и темп',
+    settingsNamed: name => `Настройки: ${name}`,
+    adjective: 'Прилагательное',
+    noun: 'Существительное',
     beat: (name, difficulty, theirs, yours) => `${name} прошёл твой уровень ${difficulty} за ${theirs}. Твоё время — ${yours}.`,
     cmdStart: 'Играть в судоку',
     cmdSudoku: 'Сегодняшняя сетка и рекорды чата',

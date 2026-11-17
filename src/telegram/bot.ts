@@ -3,14 +3,17 @@ import { Telegraf } from 'telegraf';
 import { version } from '../../package.json';
 import { cardLang, Lang, langFrom, messages } from '@/i18n';
 import { difficultyCode, difficultyFromCode, parseDifficultyArg, parseStartParam } from '@/sudoku/daily';
+import { parseDuelId } from '@/sudoku/duel';
 import { parseMatchId } from '@/sudoku/match';
+import { settingsNickname } from '@/sudoku/nicknames';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
+import { GameSettingsType } from '@/types';
 import { playLink, renderCard, renderMatch, formatSeconds } from './cardText';
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
-import { acceptDuel, readDuel, recordDuelResult, saveDuel, toGhost } from './duels';
-import { attachInlineMessage, noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
+import { acceptDuel, bindDuelMessage, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
+import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -19,7 +22,6 @@ if (!token) {
 
 const bot = new Telegraf(token);
 const webAppUrl = process.env.TELEGRAM_WEBAPP_URL || `https://buravchik.github.io/sudoku/?v=${version}`;
-const publicOrigin = 'https://sudoku-bot-294383977898.europe-west1.run.app';
 const webhookMode = process.env.RECORDS_BACKEND === 'firestore';
 const miniAppShortName = process.env.TELEGRAM_MINI_APP_SHORT_NAME?.trim() || undefined;
 const scorePort = Number(process.env.PORT || 8080);
@@ -30,12 +32,20 @@ bot.start(async (ctx) => {
   if (!ctx.chat) return;
   const text = messages(langFrom(ctx.from?.language_code));
   const openedMatch = parseMatchId(ctx.startPayload ?? '');
-  if (openedMatch && !isGroup(ctx.chat.type)) {
-    const match = await readMatch(openedMatch);
+  const openedDuel = parseDuelId(ctx.startPayload ?? '');
+  if ((openedMatch || openedDuel) && !isGroup(ctx.chat.type)) {
+    const match = openedMatch ? await readMatch(openedMatch) : null;
+    const duel = openedDuel ? await readDuel(openedDuel) : null;
     const url = new URL(webAppUrl);
-    url.searchParams.set('match', `i${openedMatch}`);
-    await ctx.reply(match ? text.challengeTitle(text.difficulties[match.difficulty]) : text.welcome, {
-      reply_markup: { inline_keyboard: [[{ text: text.play, web_app: { url: url.toString() } }]] },
+    url.searchParams.set('match', openedMatch ? `i${openedMatch}` : `d${openedDuel}`);
+    const difficulty = match?.difficulty ?? duel?.difficulty;
+    const title = duel
+      ? `${text.challengeFrom(duel.name, text.difficulties[duel.difficulty])}\n${formatSeconds(duel.seconds)}${typeof duel.score === 'number' ? ` · ${text.score(duel.score)}` : ''}`
+      : difficulty
+        ? text.challengeTitle(text.difficulties[difficulty])
+        : text.welcome;
+    await ctx.reply(title, {
+      reply_markup: { inline_keyboard: [[{ text: duel ? text.beatRecord : text.play, web_app: { url: url.toString() } }]] },
     });
     return;
   }
@@ -117,11 +127,20 @@ bot.on('inline_query', async (ctx) => {
 });
 
 bot.on('chosen_inline_result', async (ctx) => {
-  await attachInlineMessage(ctx.chosenInlineResult.result_id, ctx.chosenInlineResult.inline_message_id ?? '');
+  const inlineMessageId = ctx.chosenInlineResult.inline_message_id ?? '';
+  const resultId = ctx.chosenInlineResult.result_id;
+  if (!inlineMessageId || !/^[a-f0-9]{16}$/.test(resultId)) return;
+  const duel = await bindDuelMessage(resultId, inlineMessageId);
+  if (duel) await editDuelMessage(duel);
 });
 
 bot.on('callback_query', async (ctx) => {
   const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
+  const duelId = /^d:([a-f0-9]{16})$/.exec(data)?.[1];
+  if (duelId) {
+    await openDuelFromMessage(ctx, duelId);
+    return;
+  }
   const parsed = parseInlineButton(data);
   const inlineMessageId = ctx.callbackQuery.inline_message_id;
   if (!parsed || !inlineMessageId) {
@@ -132,15 +151,9 @@ bot.on('callback_query', async (ctx) => {
     const match = await openInlineMatch(inlineMessageId, parsed.difficulty, parsed.lang);
     const noted = await noteMatchPlayer(match.id, ctx.from.id, displayName(ctx.from, parsed.lang));
     const current = noted?.match ?? match;
-    const page = playPageUrl(current.id);
-    await editInlineMatch(current, page);
-    try {
-      await ctx.answerCbQuery(undefined, { url: page });
-    } catch (error) {
-      if (!isUrlInvalid(error)) throw error;
-      const botUsername = await ensureUsername();
-      await ctx.answerCbQuery(undefined, { url: `https://t.me/${botUsername}?start=i${current.id}` });
-    }
+    await editInlineMatch(current);
+    const botUsername = await ensureUsername();
+    await ctx.answerCbQuery(undefined, { url: `https://t.me/${botUsername}?start=i${current.id}` });
   } catch (error) {
     console.error('Failed to open an inline match.', error);
     await ctx.answerCbQuery().catch(() => undefined);
@@ -403,10 +416,6 @@ function pickDifficulties(query: string): SudokuGuruDifficulty[] {
   return picked.length > 0 ? picked : all;
 }
 
-function playPageUrl(id: string): string {
-  return `${publicOrigin}/play/i${id}`;
-}
-
 function matchIdFrom(startParam: string | undefined, bodyId: unknown): string | null {
   const fromStart = startParam ? parseMatchId(startParam) : null;
   if (fromStart) return fromStart;
@@ -418,10 +427,6 @@ function displayName(from: { first_name?: string; last_name?: string } | undefin
   return name || (lang === 'ru' ? 'Игрок' : 'Player');
 }
 
-function isUrlInvalid(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('URL_INVALID');
-}
-
 async function handlePlayOpen(id: string, res: http.ServerResponse): Promise<void> {
   if (!/^[a-f0-9]{16}$/.test(id)) {
     res.writeHead(404);
@@ -429,13 +434,13 @@ async function handlePlayOpen(id: string, res: http.ServerResponse): Promise<voi
     return;
   }
   const botUsername = await ensureUsername();
-  const target = `https://t.me/${botUsername}?startapp=i${id}`;
+  const target = `https://t.me/${botUsername}?start=i${id}`;
   const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${target}"><title>Sudoku</title><script>location.replace(${JSON.stringify(target)})</script><p><a href="${target}">Play</a></p>`;
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(html);
 }
 
-async function editInlineMatch(match: StoredMatch, link: string): Promise<void> {
+async function editInlineMatch(match: StoredMatch): Promise<void> {
   if (!match.inlineMessageId) return;
   const text = messages(match.lang);
   await bot.telegram.editMessageText(
@@ -444,7 +449,12 @@ async function editInlineMatch(match: StoredMatch, link: string): Promise<void> 
     match.inlineMessageId,
     renderMatch(match.lang, match.difficulty, match.entries, match.present ?? []),
     {
-      reply_markup: { inline_keyboard: [[{ text: text.play, url: link }]] },
+      reply_markup: {
+        inline_keyboard: [[{
+          text: text.play,
+          callback_data: `n:${difficultyCode(match.difficulty)}:${match.lang}`,
+        }]],
+      },
       link_preview_options: { is_disabled: true },
     },
   ).catch(error => {
@@ -462,7 +472,7 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
     const noted = await noteMatchPlayer(id, signed.userId, signed.name);
-    if (noted?.added) await editInlineMatch(noted.match, playPageUrl(id));
+    if (noted?.added) await editInlineMatch(noted.match);
     const match = noted?.match ?? await readMatch(id);
     if (!match) {
       sendJson(res, 404, { ok: false });
@@ -494,7 +504,7 @@ async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResp
       sendJson(res, 400, { ok: false });
       return;
     }
-    if (update) await editInlineMatch(update.match, playPageUrl(update.match.id));
+    if (update) await editInlineMatch(update.match);
     sendJson(res, 200, { ok: true, improved: update.improved });
   } catch (error) {
     console.error('Failed to record an inline result.', error);
@@ -532,6 +542,7 @@ async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerRespo
       total?: unknown;
       samples?: unknown;
       settings?: unknown;
+      score?: unknown;
     };
     const initData = typeof body.initData === 'string' ? body.initData : '';
     const signed = readSignedInitData(initData, token);
@@ -548,6 +559,7 @@ async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerRespo
       total: typeof body.total === 'number' ? body.total : -1,
       samples: body.samples,
       settings: body.settings,
+      score: body.score,
     });
     if (!accepted) {
       sendJson(res, 400, { ok: false });
@@ -555,8 +567,8 @@ async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerRespo
     }
     const duel = await saveDuel({ ...accepted, lang: signed.lang });
     const botUsername = await ensureUsername();
-    const link = `https://t.me/${botUsername}?startapp=d${duel.id}`;
-    const messageId = await prepareChallengeMessage(signed.userId, signed.lang, duel, link);
+    const link = `https://t.me/${botUsername}?start=d${duel.id}`;
+    const messageId = await prepareChallengeMessage(signed.userId, signed.lang, duel);
     sendJson(res, 200, { ok: true, id: duel.id, link, messageId });
   } catch (error) {
     console.error('Failed to create a duel.', error);
@@ -595,12 +607,14 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
     const previousBest = existing.bestSeconds;
-    await recordDuelResult(id, seconds);
+    const updated = await recordDuelResult(id, signed.userId, signed.name, seconds);
+    if (updated) await editDuelMessage(updated);
     const beat = seconds < existing.seconds && (previousBest === null || seconds < previousBest);
     if (beat && signed.userId !== existing.userId) {
-      const text = messages(cardLang(existing.lang)).beat(
+      const copy = messages(cardLang(existing.lang));
+      const text = copy.beat(
         signed.name,
-        existing.difficulty,
+        copy.difficulties[existing.difficulty],
         formatSeconds(seconds),
         formatSeconds(existing.seconds),
       );
@@ -615,13 +629,85 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
   }
 }
 
-async function prepareChallengeMessage(userId: number, lang: Lang, duel: { id: string; name: string; difficulty: string; seconds: number }, link: string): Promise<string | null> {
-  const copy = messages(lang);
-  const text = [
-    `Sudoku · ${duel.difficulty}`,
+async function openDuelFromMessage(ctx: {
+  from: { id: number; first_name?: string; last_name?: string; language_code?: string };
+  callbackQuery: { inline_message_id?: string };
+  answerCbQuery: (text?: string, extra?: { url?: string }) => Promise<unknown>;
+}, id: string): Promise<void> {
+  const inlineMessageId = ctx.callbackQuery.inline_message_id ?? '';
+  try {
+    if (inlineMessageId) await bindDuelMessage(id, inlineMessageId);
+    const lang = langFrom(ctx.from.language_code);
+    const noted = await noteDuelGuest(id, ctx.from.id, displayName(ctx.from, lang));
+    const duel = noted ?? await readDuel(id);
+    if (duel) await editDuelMessage(duel);
+    const botUsername = await ensureUsername();
+    await ctx.answerCbQuery(undefined, { url: `https://t.me/${botUsername}?start=d${id}` });
+  } catch (error) {
+    console.error('Failed to open a challenge from its message.', error);
+    await ctx.answerCbQuery().catch(() => undefined);
+  }
+}
+
+function renderDuelMessage(duel: StoredDuel): string {
+  const copy = messages(cardLang(duel.lang));
+  const lines = [
+    `Sudoku · ${copy.difficulties[duel.difficulty]}`,
     `${duel.name} — ${formatSeconds(duel.seconds)}`,
+  ];
+  if (typeof duel.score === 'number') lines.push(copy.score(duel.score));
+  lines.push(
+    copy.settingsNamed(settingsNickname(duel.settings, cardLang(duel.lang))),
     copy.preparedLine,
-  ].join('\n');
+  );
+  const playing = (duel.guests ?? []).filter(guest => guest.seconds === null);
+  const finished = (duel.guests ?? []).filter(guest => guest.seconds !== null);
+  if (playing.length > 0) {
+    lines.push('', copy.playing);
+    playing.slice(0, 10).forEach(guest => lines.push(`• ${guest.name}`));
+  }
+  if (finished.length > 0) lines.push('');
+  finished
+    .slice()
+    .sort((left, right) => (left.seconds ?? 0) - (right.seconds ?? 0))
+    .slice(0, 10)
+    .forEach(guest => lines.push(`${guest.name} — ${formatSeconds(guest.seconds ?? 0)}`));
+  return lines.join('\n');
+}
+
+async function editDuelMessage(duel: StoredDuel): Promise<void> {
+  if (!duel.inlineMessageId) return;
+  const copy = messages(cardLang(duel.lang));
+  await bot.telegram.editMessageText(
+    undefined,
+    undefined,
+    duel.inlineMessageId,
+    renderDuelMessage(duel),
+    {
+      reply_markup: { inline_keyboard: [[{ text: copy.beatRecord, callback_data: `d:${duel.id}` }]] },
+      link_preview_options: { is_disabled: true },
+    },
+  ).catch(error => {
+    if (!isNotModified(error)) console.error('Failed to refresh the challenge message.', error);
+  });
+}
+
+async function prepareChallengeMessage(
+  userId: number,
+  lang: Lang,
+  duel: { id: string; name: string; difficulty: SudokuGuruDifficulty; seconds: number; settings: GameSettingsType; score?: number },
+): Promise<string | null> {
+  const copy = messages(lang);
+  const lines = [
+    `Sudoku · ${copy.difficulties[duel.difficulty]}`,
+    `${duel.name} — ${formatSeconds(duel.seconds)}`,
+  ];
+  if (typeof duel.score === 'number') lines.push(copy.score(duel.score));
+  lines.push(
+    copy.settingsNamed(settingsNickname(duel.settings, lang)),
+    copy.preparedLine,
+  );
+  const text = lines.join('\n');
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/savePreparedInlineMessage`, {
       method: 'POST',
@@ -633,11 +719,11 @@ async function prepareChallengeMessage(userId: number, lang: Lang, duel: { id: s
         result: {
           type: 'article',
           id: duel.id,
-          title: `${duel.name} · ${duel.difficulty} · ${formatSeconds(duel.seconds)}`,
+          title: `${duel.name} · ${copy.difficulties[duel.difficulty]} · ${formatSeconds(duel.seconds)}${typeof duel.score === 'number' ? ` · ${duel.score}` : ''}`,
           description: copy.preparedDescription,
           input_message_content: { message_text: text },
           reply_markup: {
-            inline_keyboard: [[{ text: copy.play, url: link }]],
+            inline_keyboard: [[{ text: copy.beatRecord, callback_data: `d:${duel.id}` }]],
           },
         },
       }),

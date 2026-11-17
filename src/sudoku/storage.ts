@@ -5,6 +5,7 @@ import { DailyChallenge, buildStartParam, parseStartParam } from './daily';
 import { parseMatchId } from './match';
 import { GhostRace, restoreGhost } from './duel';
 import { PaceSample, restorePace } from './pace';
+import { ScoreMark, restoreMarks } from './score';
 import { Digit, GlobalGameState, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from './types';
 
 const SETTINGS_KEY = 'sudokuGameSettings';
@@ -22,7 +23,16 @@ export const DEFAULT_SETTINGS: GameSettingsType = {
   highlightQuadrantsWithSameNumber: true,
   highlightAllObviousCells: true,
   highlightObviousCellsForCurrentNumber: true,
+  undoMoves: false,
+  highlightConflicts: false,
+  countMistakes: false,
 };
+
+export function usualSettings(settings: Partial<GameSettingsType>): boolean {
+  return (Object.keys(DEFAULT_SETTINGS) as (keyof GameSettingsType)[]).every(
+    key => (settings[key] ?? DEFAULT_SETTINGS[key]) === DEFAULT_SETTINGS[key],
+  );
+}
 
 export interface StoredSession {
   gameState: GlobalGameState;
@@ -33,6 +43,8 @@ export interface StoredSession {
   pace: PaceSample[];
   ghost: GhostRace | null;
   matchId: string | null;
+  mistakes: number;
+  marks: ScoreMark[];
 }
 
 const EMPTY_SESSION: StoredSession = {
@@ -44,6 +56,8 @@ const EMPTY_SESSION: StoredSession = {
   pace: [],
   ghost: null,
   matchId: null,
+  mistakes: 0,
+  marks: [],
 };
 
 export function loadSettings(): GameSettingsType {
@@ -119,6 +133,8 @@ export function sessionFromJson(raw: string | null): StoredSession | null {
       pace: restorePace(parsed.pace),
       ghost: restoreGhost(parsed.ghost),
       matchId: parseMatchId(typeof parsed.matchId === 'string' ? `i${parsed.matchId}` : null),
+      mistakes: restoredMistakes(parsed.mistakes),
+      marks: restoreMarks(parsed.marks),
     };
   } catch (error) {
     console.error('Failed to restore game state:', error);
@@ -158,6 +174,8 @@ export function saveStoredSession(session: StoredSession): void {
     pace: session.pace,
     ghost: session.ghost,
     matchId: session.matchId,
+    mistakes: session.mistakes,
+    marks: session.marks,
     boardState: {
       difficulty: session.board.difficulty,
       level: session.board.level,
@@ -189,6 +207,8 @@ interface StoredGameState {
   pace?: unknown;
   ghost?: unknown;
   matchId?: unknown;
+  mistakes?: unknown;
+  marks?: unknown;
   boardState: {
     difficulty: SudokuGuruDifficulty;
     level?: number | null;
@@ -280,6 +300,10 @@ function restoreChallenge(value: unknown): DailyChallenge | null {
 function elapsedSecondsFrom(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 0;
   return Math.floor(value);
+}
+
+function restoredMistakes(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 function isDifficulty(value: unknown): value is SudokuGuruDifficulty {

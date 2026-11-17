@@ -7,7 +7,9 @@ import { loadDailyPuzzle, loadLevelPuzzle, loadPuzzle } from '@/sudoku/loadPuzzl
 import { Copy } from '@/i18n';
 import { parseMatchId } from '@/sudoku/match';
 import { appendPace, cellsLeft, cellsToFill, paceAt, pacePercent, PaceSample } from '@/sudoku/pace';
+import { settingsNickname } from '@/sudoku/nicknames';
 import { isSolved } from '@/sudoku/rules';
+import { ScoreMark, difficultyMultiplier, finalScore, missedStake, shownTotal, stakeAt } from '@/sudoku/score';
 import {
   clearStoredSession,
   loadDeviceSnapshot,
@@ -16,7 +18,7 @@ import {
   saveSettings,
   saveStoredSession,
 } from '@/sudoku/storage';
-import { Digit, LoadedPuzzle, SudokuGuruDifficulty } from '@/sudoku/types';
+import { Digit, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from '@/sudoku/types';
 import { createDuel, fetchDuel, reportDuelResult } from '@/telegram/duelClient';
 import { fetchMatchState, reportMatchResult } from '@/telegram/matchClient';
 import {
@@ -33,18 +35,16 @@ import {
 } from '@/telegram/webApp';
 import { GroupLeader, GroupPlayer, LiveRival, submitGroupScore, syncGroupRace } from '@/telegram/submitScore';
 import { GameSettingsType } from '@/types';
-import SettingsIcon from '@mui/icons-material/Settings';
-import { Dialog } from '@mui/material';
-import Button from '@mui/material/Button';
-import { Stack } from '@mui/system';
-import { useEffect, useRef, useState } from 'react';
+import { ButtonHTMLAttributes, useEffect, useRef, useState } from 'react';
 import GameBoard from '../GameBoard';
 import GameSettings from '../GameSettings';
-import { useMessages } from '../Locale';
+import ResultChart from '../ResultChart';
+import { useLang, useMessages } from '../Locale';
 import styles from './GameWrapper.module.css';
 
 export default function GameWrapper() {
   const text = useMessages();
+  const lang = useLang();
   const [session] = useState(loadStoredSession);
   const [gameState, setGameState] = useState(session.gameState);
   const [difficultyState, setDifficultyState] = useState(session.difficultyState);
@@ -65,6 +65,10 @@ export default function GameWrapper() {
   const [matchId, setMatchId] = useState<string | null>(session.matchId);
   const [matchLeader, setMatchLeader] = useState<GroupLeader | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [mistakes, setMistakes] = useState(session.mistakes);
+  const [undoCount, setUndoCount] = useState(0);
+  const [marks, setMarks] = useState<ScoreMark[]>(session.marks);
+  const [award, setAward] = useState<{ stake: number; key: number } | null>(null);
 
   const timeRef = useRef(time);
   const boardRef = useRef(board);
@@ -77,6 +81,9 @@ export default function GameWrapper() {
   const ghostRef = useRef(ghost);
   const matchIdRef = useRef(matchId);
   const paceRef = useRef<PaceSample[]>(session.pace);
+  const historyRef = useRef<PlayedMove[]>([]);
+  const mistakesRef = useRef(mistakes);
+  const marksRef = useRef(marks);
   const challengeLaunchStarted = useRef(false);
   timeRef.current = time;
   boardRef.current = board;
@@ -87,6 +94,8 @@ export default function GameWrapper() {
   challengeRef.current = challenge;
   ghostRef.current = ghost;
   matchIdRef.current = matchId;
+  mistakesRef.current = mistakes;
+  marksRef.current = marks;
 
   const persist = useRef(() => {
     if (!storageReadyRef.current) return;
@@ -99,6 +108,8 @@ export default function GameWrapper() {
       pace: paceRef.current,
       ghost: ghostRef.current,
       matchId: matchIdRef.current,
+      mistakes: mistakesRef.current,
+      marks: marksRef.current,
     });
   }).current;
 
@@ -120,6 +131,11 @@ export default function GameWrapper() {
         setMatchId(restored.matchId);
         if (restored.ghost) setSettings(restored.ghost.settings);
         paceRef.current = restored.pace;
+        historyRef.current = [];
+        setUndoCount(0);
+        setMistakes(restored.mistakes);
+        setMarks(restored.marks);
+        setAward(null);
         previousStateRef.current = restored.gameState;
       }
       setStorageReady(true);
@@ -259,6 +275,15 @@ export default function GameWrapper() {
   }, [gameState, persist]);
 
   useEffect(() => {
+    if (!isSettingsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsSettingsOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isSettingsOpen]);
+
+  useEffect(() => {
     const saveIfHidden = () => {
       if (document.visibilityState === 'hidden') persist();
     };
@@ -279,9 +304,61 @@ export default function GameWrapper() {
     });
   };
 
+  const handleSettingsApply = (next: GameSettingsType) => {
+    setSettings(next);
+    if (!ghostRef.current) saveSettings(next);
+  };
+
+  const forgetMoves = () => {
+    historyRef.current = [];
+    setUndoCount(0);
+    setMistakes(0);
+    marksRef.current = [];
+    setMarks([]);
+    setAward(null);
+  };
+
+  const applyCell = (index: number, update: (cell: SudokuCell) => SudokuCell, countsAsMistake: boolean, score: boolean) => {
+    const before = boardRef.current?.cells[index];
+    if (!before) return;
+    const after = update(before);
+    if (after === before) return;
+    const mistake = countsAsMistake && settingsRef.current.countMistakes;
+    const difficulty = difficultyRef.current || boardRef.current?.difficulty;
+    const mark = score && difficulty
+      ? { t: Math.max(0, Math.floor(timeRef.current)), stake: stakeAt(difficulty, timeRef.current), hit: !countsAsMistake }
+      : null;
+    historyRef.current.push({ index, cell: before, mistake, scored: mark !== null });
+    setUndoCount(historyRef.current.length);
+    if (mistake) setMistakes(count => count + 1);
+    if (mark) {
+      const next = [...marksRef.current, mark];
+      marksRef.current = next;
+      setMarks(next);
+      setAward({ stake: mark.stake, key: Date.now() });
+    }
+    setBoard(current => replaceCell(current, index, () => after));
+  };
+
+  const handleUndo = () => {
+    const move = historyRef.current.pop();
+    setUndoCount(historyRef.current.length);
+    if (!move) return;
+    if (move.mistake) setMistakes(count => Math.max(0, count - 1));
+    if (move.scored) {
+      const next = marksRef.current.slice(0, -1);
+      marksRef.current = next;
+      setMarks(next);
+      setAward(null);
+    }
+    hapticImpact();
+    setBoard(current => replaceCell(current, move.index, () => move.cell));
+  };
+
   const handleNewGame = () => {
     clearStoredSession();
     paceRef.current = [];
+    forgetMoves();
     setChallenge(null);
     setGhost(null);
     setGroupPlace(null);
@@ -305,17 +382,19 @@ export default function GameWrapper() {
 
   const handleCellValueChange = (index: number, value: Digit) => {
     hapticImpact();
-    setBoard(current => replaceCell(current, index, cell => setUserValue(cell, value)));
+    const cell = boardRef.current?.cells[index];
+    const wrong = Boolean(cell && value !== 0 && cell.solutionValue !== 0 && value !== cell.solutionValue);
+    applyCell(index, current => setUserValue(current, value), wrong, value !== 0);
   };
 
   const handleCellHintToggle = (index: number, hint: number) => {
     hapticSelection();
-    setBoard(current => replaceCell(current, index, cell => toggleHint(cell, hint)));
+    applyCell(index, cell => toggleHint(cell, hint), false, false);
   };
 
   const handleCellClear = (index: number) => {
     hapticImpact();
-    setBoard(current => replaceCell(current, index, clearCell));
+    applyCell(index, clearCell, false, false);
   };
 
   const handleShare = async () => {
@@ -326,6 +405,7 @@ export default function GameWrapper() {
       setShareError(null);
       const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(boardNow.cells));
       paceRef.current = samples;
+      const score = settledScore(difficultyState, marksRef.current);
       const created = await createDuel({
         difficulty: difficultyState,
         level: boardNow.level,
@@ -333,13 +413,20 @@ export default function GameWrapper() {
         total: cellsToFill(boardNow.cells),
         samples,
         settings: settingsRef.current,
+        score,
       });
       setSharing(false);
       if (!created) {
         setShareError(text.shareFailed);
         return;
       }
-      const challengeText = text.shareChallenge(difficultyState, formatTime(timeRef.current));
+      const settingsLine = text.settingsNamed(settingsNickname(settingsRef.current, lang));
+      const challengeText = text.shareChallenge(
+        text.difficulties[difficultyState],
+        formatTime(timeRef.current),
+        settingsLine,
+        score,
+      );
       if (created.messageId && telegramWebApp()?.shareMessage) {
         await sharePreparedMessage(created.messageId);
         return;
@@ -354,7 +441,12 @@ export default function GameWrapper() {
       return;
     }
 
-    const solvedText = text.shareSolved(difficultyState || 'a', formatTime(time));
+    const solvedDifficulty = difficultyState || boardNow?.difficulty;
+    const solvedText = text.shareSolved(
+      solvedDifficulty ? text.difficulties[solvedDifficulty] : '',
+      formatTime(time),
+      settledScore(solvedDifficulty, marksRef.current),
+    );
     const url = publicShareUrl(inTelegram, readStartParam(), window.location.href);
     if (shareInTelegram(solvedText, url)) return;
     if (navigator.share) {
@@ -374,6 +466,7 @@ export default function GameWrapper() {
 
   const handleReset = () => {
     paceRef.current = [];
+    forgetMoves();
     setBoard(current => current ? { ...current, cells: current.cells.map(resetProgress) } : current);
     setTime(0);
     setGameState('playing');
@@ -382,6 +475,7 @@ export default function GameWrapper() {
   const startChallenge = async (launch: DailyChallenge) => {
     setIsLoading(true);
     paceRef.current = [];
+    forgetMoves();
     setChallenge(launch);
     setGhost(null);
     setGroupLeader(null);
@@ -412,6 +506,7 @@ export default function GameWrapper() {
   const startDuel = async (id: string) => {
     setIsLoading(true);
     paceRef.current = [];
+    forgetMoves();
     setChallenge(null);
     setGhost(null);
     setGroupLeader(null);
@@ -445,6 +540,7 @@ export default function GameWrapper() {
   const startMatch = async (id: string) => {
     setIsLoading(true);
     paceRef.current = [];
+    forgetMoves();
     setChallenge(null);
     setGhost(null);
     setGroupLeader(null);
@@ -479,6 +575,7 @@ export default function GameWrapper() {
   const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
     setIsLoading(true);
     paceRef.current = [];
+    forgetMoves();
     setChallenge(null);
     setGhost(null);
     setGroupLeader(null);
@@ -509,6 +606,7 @@ export default function GameWrapper() {
 
   const activeBoard = gameState === 'playing' || gameState === 'won' ? board : null;
   const paceOpponent = ghost ?? (gameState === 'playing' ? (groupLeader ?? matchLeader) : null);
+  const chartRival = ghost ?? groupLeader ?? matchLeader;
   const difficultyName = difficultyState ? text.difficulties[difficultyState] : null;
 
   return (
@@ -521,14 +619,29 @@ export default function GameWrapper() {
           <span className={styles.timer}>
             {text.timeTitle(formatTime(time))}
           </span>
+          {settings.countMistakes && activeBoard && (
+            <span className={styles.mistakes}>{text.mistakes(mistakes)}</span>
+          )}
+          {activeBoard && (
+            <span className={styles.score}>
+              {text.score(shownTotal(marks))}
+              {award && (
+                <span key={award.key} className={styles.scorePop} aria-hidden="true">+{award.stake}</span>
+              )}
+            </span>
+          )}
         </div>
-        <Button
-          className={styles.settingsButton}
+        <button
+          type="button"
+          className={styles.iconButton}
           onClick={() => setIsSettingsOpen(true)}
           aria-label={text.settings}
         >
-          <SettingsIcon />
-        </Button>
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+            <circle cx="9" cy="9" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M9 1.8v2.1M9 14.1v2.1M1.8 9h2.1M14.1 9h2.1M3.7 3.7l1.5 1.5M12.8 12.8l1.5 1.5M14.3 3.7l-1.5 1.5M5.2 12.8l-1.5 1.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
 
       {challenge && activeBoard && (
@@ -570,77 +683,64 @@ export default function GameWrapper() {
           {!ghost && !groupLeader && matchLeader ? raceResult(text, matchLeader, time) : ''}
         </p>
       )}
-
       {isLoading || !storageReady ? (
         <div className={styles.loadingContainer}>{text.loading}</div>
       ) : (
         <>
-          <Stack spacing={2} sx={{
-            width: '100%',
-            '& .MuiButton-root': {
-              height: '36px',
-              borderRadius: '4px',
-              textTransform: 'uppercase',
-            },
-          }}>
+          <div className={styles.actions}>
             {gameState !== 'selectDifficulty' && (
-              <Button variant="outlined" onClick={handleNewGame} fullWidth>
+              <Pill primary onClick={handleNewGame}>
                 {text.newGame}
-              </Button>
+              </Pill>
+            )}
+
+            {activeBoard && settings.undoMoves && (
+              <Pill onClick={handleUndo} disabled={undoCount === 0}>
+                {text.undo}
+              </Pill>
             )}
 
             {activeBoard && (
-              <Button variant="outlined" onClick={handleReset} fullWidth>
+              <Pill onClick={handleReset}>
                 {text.reset}
-              </Button>
+              </Pill>
             )}
 
             {gameState === 'won' && (
-              <Button variant="outlined" onClick={() => void handleShare()} disabled={sharing} fullWidth>
+              <Pill onClick={() => void handleShare()} disabled={sharing}>
                 {sharing ? text.sending : canChallenge(activeBoard) ? text.challengeFriend : text.shareResult}
-              </Button>
+              </Pill>
             )}
             {shareError && <p className={styles.errorText}>{shareError}</p>}
 
             {(homeScreen === 'missed' || homeScreen === 'unknown') && (
-              <Button
-                variant="outlined"
-                onClick={() => telegramWebApp()?.addToHomeScreen?.()}
-                fullWidth
-              >
+              <Pill onClick={() => telegramWebApp()?.addToHomeScreen?.()}>
                 {text.addHome}
-              </Button>
+              </Pill>
             )}
 
             {gameState === 'selectDifficulty' && (
               Object.values(SudokuGuruDifficulty).map(difficulty => (
-                <Button
-                  key={difficulty}
-                  variant="outlined"
-                  onClick={() => handleStartGame(difficulty)}
-                  fullWidth
-                >
+                <Pill key={difficulty} onClick={() => handleStartGame(difficulty)}>
                   {text.difficulties[difficulty]}
-                </Button>
+                </Pill>
               ))
             )}
 
             {gameState === 'error' && (
               <>
                 <p className={styles.errorText}>{text.loadFailed}</p>
-                <Button
-                  variant="outlined"
+                <Pill
                   onClick={() => {
                     if (difficultyState) void handleStartGame(difficultyState);
                   }}
-                  fullWidth
                   disabled={!difficultyState}
                 >
                   {text.tryAgain}
-                </Button>
+                </Pill>
               </>
             )}
-          </Stack>
+          </div>
 
           {activeBoard && (
             <div className={styles.gameBoard}>
@@ -653,23 +753,75 @@ export default function GameWrapper() {
               />
             </div>
           )}
+          {gameState === 'won' && activeBoard && (
+            <ResultChart
+              you={{
+                name: text.you,
+                samples: appendPace(paceRef.current, time, cellsLeft(activeBoard.cells)),
+                total: cellsToFill(activeBoard.cells),
+                seconds: time,
+              }}
+              rival={chartRival && {
+                name: chartRival.name,
+                samples: chartRival.samples,
+                total: chartRival.total,
+                seconds: chartRival.seconds,
+              }}
+              marks={marks}
+              digitsLabel={text.digitsOverTime}
+              pointsLabel={text.pointsOverTime}
+              summary={text.scoreResult(
+                shownTotal(marks),
+                missedStake(marks),
+                difficultyMultiplier(activeBoard.difficulty),
+                finalScore(marks, activeBoard.difficulty),
+              )}
+            />
+          )}
         </>
       )}
 
-      <Dialog
-        open={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <GameSettings
-          settings={settings}
-          onSettingChange={handleSettingChange}
-          onClose={() => setIsSettingsOpen(false)}
-        />
-      </Dialog>
+      {isSettingsOpen && (
+        <div className={styles.scrim} onMouseDown={() => setIsSettingsOpen(false)}>
+          <div
+            className={styles.sheet}
+            role="dialog"
+            aria-modal="true"
+            aria-label={text.settings}
+            onMouseDown={event => event.stopPropagation()}
+          >
+            <GameSettings
+              settings={settings}
+              onSettingChange={handleSettingChange}
+              onApply={handleSettingsApply}
+              onClose={() => setIsSettingsOpen(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function Pill({
+  primary = false,
+  className,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { primary?: boolean }) {
+  const tone = primary ? styles.pillPrimary : styles.pillSecondary;
+  return <button type="button" className={className ? `${styles.pill} ${tone} ${className}` : `${styles.pill} ${tone}`} {...props} />;
+}
+
+interface PlayedMove {
+  index: number;
+  cell: SudokuCell;
+  mistake: boolean;
+  scored: boolean;
+}
+
+function settledScore(difficulty: SudokuGuruDifficulty | '' | undefined, marks: readonly ScoreMark[]): number {
+  if (!difficulty) return 0;
+  return finalScore(marks, difficulty);
 }
 
 function replaceCell(

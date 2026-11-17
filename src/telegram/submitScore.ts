@@ -1,4 +1,4 @@
-import { PaceSample, compactPaceForSend } from '@/sudoku/pace';
+import { PaceSample, compactPaceForSend, sanitizePace } from '@/sudoku/pace';
 
 export interface GroupLeader {
   name: string;
@@ -19,6 +19,17 @@ export interface LiveRival {
   seconds: number;
   total: number;
   samples: PaceSample[];
+}
+
+function readRival(value: unknown): LiveRival | null {
+  if (!value || typeof value !== 'object') return null;
+  const rival = value as { name?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
+  if (typeof rival.name !== 'string' || rival.name.trim() === '') return null;
+  if (typeof rival.seconds !== 'number' || !Number.isInteger(rival.seconds) || rival.seconds < 0) return null;
+  if (typeof rival.total !== 'number' || !Number.isInteger(rival.total) || rival.total < 0) return null;
+  const samples = sanitizePace(rival.samples, rival.total, rival.seconds);
+  if (!samples) return null;
+  return { name: rival.name, seconds: rival.seconds, total: rival.total, samples };
 }
 
 export async function submitGroupScore(
@@ -64,8 +75,7 @@ export async function syncGroupRace(
     if (!response.ok) return null;
     const payload = await response.json() as { ok?: boolean; leader?: GroupLeader | null; players?: GroupPlayer[]; rival?: LiveRival | null };
     if (!payload.ok || !Array.isArray(payload.players)) return null;
-    const rival = payload.rival && Array.isArray(payload.rival.samples) ? payload.rival : null;
-    return { leader: payload.leader ?? null, players: payload.players, rival };
+    return { leader: payload.leader ?? null, players: payload.players, rival: readRival(payload.rival) };
   } catch (error) {
     console.error('Failed to sync the live race.', error);
     return null;

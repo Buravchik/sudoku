@@ -20,10 +20,10 @@
   display: flex;
   align-items: center;
   background-color: var(--header-bg);
-  padding: 6px 8px;
-  border-radius: 4px;
-  min-height: 36px;
-  gap: 4px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 20px;
+  min-height: 48px;
+  gap: 8px;
 }
 
 .title {
@@ -32,8 +32,9 @@
   flex-grow: 1;
   text-align: left;
   min-width: 0;
-  font-size: 14px;
-  gap: 4px;
+  font-size: 15px;
+  font-weight: 500;
+  gap: 8px;
   color: var(--header-fg);
 }
 
@@ -50,40 +51,116 @@
   white-space: nowrap;
 }
 
-/* Override MUI button styles */
-.settingsButton {
+.mistakes {
   flex-shrink: 0;
-  padding: 2px !important;
-  min-width: 0 !important;
-  margin-left: 4px !important;
+  white-space: nowrap;
+  color: var(--error);
 }
 
-.settingsButton svg {
-  font-size: 18px;
+.score {
+  position: relative;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
-/* Add modal styles */
-.modalOverlay {
-  position: fixed;
-  top: 0;
+.scorePop {
+  position: absolute;
   left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  bottom: 100%;
+  font-weight: 700;
+  color: var(--primary);
+  pointer-events: none;
+  animation: score-rise var(--motion-spatial-fast) both;
+}
+
+@keyframes score-rise {
+  from { transform: translateY(6px); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: translateY(-12px); opacity: 0; }
+}
+
+.iconButton {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  margin-left: 4px;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  cursor: pointer;
+  transition: transform var(--motion-spatial-fast), background-color var(--motion-effects);
+}
+
+.iconButton:active {
+  transform: scale(0.92);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.pill {
+  height: 48px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 20px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--motion-spatial-fast), background-color var(--motion-effects);
+}
+
+.pill:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.pill:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pillPrimary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.pillSecondary {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 13, 18, 0.4);
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 1000;
+  padding: 16px;
 }
 
-.modalContent {
-  background: white;
-  padding: 24px;
-  border-radius: 8px;
+.sheet {
+  background: var(--header-bg);
+  color: var(--foreground);
+  border-radius: 28px;
   max-width: 90%;
   width: 400px;
   max-height: 90vh;
   overflow-y: auto;
+  animation: sheet-in var(--motion-spatial-fast) both;
+}
+
+@keyframes sheet-in {
+  from { transform: scale(0.92); }
+  to { transform: scale(1); }
 }
 
 /* Add styles for the game board container */
@@ -95,7 +172,6 @@
 }
 
 .notice,
-.winBanner,
 .errorText {
   margin: 0;
   font-size: 14px;
@@ -106,10 +182,14 @@
   color: var(--muted);
 }
 
-.race {
+.race,
+.field {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: var(--surface-container);
+  border-radius: 20px;
+  padding: 12px 16px;
 }
 
 .raceMeter {
@@ -146,15 +226,20 @@
   opacity: 0.4;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.winBanner {
+  margin: 0;
+  text-align: center;
+  color: var(--primary);
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  animation: hero-in var(--motion-spatial-fast) both;
 }
 
-.winBanner {
-  color: var(--win);
-  font-weight: 600;
+@keyframes hero-in {
+  from { transform: scale(0.86); }
+  to { transform: scale(1); }
 }
 
 .errorText {

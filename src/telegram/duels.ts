@@ -10,11 +10,20 @@ const MAX_SECONDS = 24 * 60 * 60;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const duelDir = path.join(process.cwd(), 'data', 'duels');
 
+export interface DuelGuest {
+  userId: number;
+  name: string;
+  seconds: number | null;
+}
+
 export interface StoredDuel extends GhostRace {
   userId: number;
   bestSeconds: number | null;
   createdAt: number;
   lang?: Lang;
+  score?: number;
+  inlineMessageId?: string;
+  guests?: DuelGuest[];
 }
 
 export interface NewDuel {
@@ -26,6 +35,7 @@ export interface NewDuel {
   total: number;
   samples: unknown;
   settings: unknown;
+  score?: unknown;
 }
 
 export function acceptDuel(input: NewDuel): Omit<StoredDuel, 'id' | 'createdAt' | 'bestSeconds'> | null {
@@ -37,6 +47,7 @@ export function acceptDuel(input: NewDuel): Omit<StoredDuel, 'id' | 'createdAt' 
   const samples = sanitizePace(input.samples, input.total, input.seconds);
   const settings = readSettingsSnapshot(input.settings);
   if (!samples || !settings) return null;
+  const score = readScore(input.score);
   return {
     userId: input.userId,
     name: input.name.slice(0, 32) || 'Игрок',
@@ -46,6 +57,7 @@ export function acceptDuel(input: NewDuel): Omit<StoredDuel, 'id' | 'createdAt' 
     total: input.total,
     samples,
     settings,
+    ...(score === undefined ? {} : { score }),
   };
 }
 
@@ -75,12 +87,49 @@ export async function readDuel(id: string): Promise<StoredDuel | null> {
   return stored;
 }
 
-export async function recordDuelResult(id: string, seconds: number): Promise<StoredDuel | null> {
+export async function bindDuelMessage(id: string, inlineMessageId: string): Promise<StoredDuel | null> {
+  if (!/^[a-f0-9]{16}$/.test(id) || !inlineMessageId) return null;
+  return updateDuel(id, duel => ({ ...duel, inlineMessageId }));
+}
+
+export async function noteDuelGuest(id: string, userId: number, name: string): Promise<StoredDuel | null> {
+  if (!Number.isInteger(userId) || userId <= 0) return null;
+  const guestName = name.replace(/\s+/g, ' ').trim().slice(0, 32);
+  if (!guestName) return null;
+  return updateDuel(id, duel => {
+    if (duel.userId === userId) return duel;
+    const guests = duel.guests ? [...duel.guests] : [];
+    const existing = guests.find(guest => guest.userId === userId);
+    if (existing) {
+      existing.name = guestName;
+      return { ...duel, guests };
+    }
+    guests.push({ userId, name: guestName, seconds: null });
+    return { ...duel, guests };
+  });
+}
+
+export async function recordDuelResult(id: string, userId: number, name: string, seconds: number): Promise<StoredDuel | null> {
+  if (!Number.isInteger(userId) || userId <= 0) return null;
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_SECONDS) return null;
-  if (process.env.RECORDS_BACKEND === 'firestore') return recordFirestoreResult(id, seconds);
+  const guestName = name.replace(/\s+/g, ' ').trim().slice(0, 32) || 'Player';
+  return updateDuel(id, duel => {
+    const bestSeconds = duel.bestSeconds !== null && seconds >= duel.bestSeconds ? duel.bestSeconds : seconds;
+    if (duel.userId === userId) return { ...duel, bestSeconds };
+    const guests = (duel.guests ?? []).filter(guest => guest.userId !== userId);
+    const previous = duel.guests?.find(guest => guest.userId === userId)?.seconds ?? null;
+    const guestSeconds = previous !== null && previous <= seconds ? previous : seconds;
+    guests.push({ userId, name: guestName, seconds: guestSeconds });
+    return { ...duel, bestSeconds, guests };
+  });
+}
+
+async function updateDuel(id: string, change: (duel: StoredDuel) => StoredDuel): Promise<StoredDuel | null> {
+  if (!/^[a-f0-9]{16}$/.test(id)) return null;
+  if (process.env.RECORDS_BACKEND === 'firestore') return updateFirestoreDuel(id, change);
   const duel = await readDuel(id);
-  if (!duel || (duel.bestSeconds !== null && seconds >= duel.bestSeconds)) return duel;
-  const next = { ...duel, bestSeconds: seconds };
+  if (!duel) return null;
+  const next = change(duel);
   await writeFile(path.join(duelDir, `${id}.json`), JSON.stringify(next));
   return next;
 }
@@ -114,7 +163,7 @@ async function readFirestoreDuel(id: string): Promise<StoredDuel | null> {
   return snapshot.data() as StoredDuel;
 }
 
-async function recordFirestoreResult(id: string, seconds: number): Promise<StoredDuel | null> {
+async function updateFirestoreDuel(id: string, change: (duel: StoredDuel) => StoredDuel): Promise<StoredDuel | null> {
   const { Firestore } = await import('@google-cloud/firestore');
   const db = new Firestore();
   const ref = db.collection('duels').doc(id);
@@ -123,11 +172,15 @@ async function recordFirestoreResult(id: string, seconds: number): Promise<Store
     if (!snapshot.exists) return null;
     const duel = snapshot.data() as StoredDuel;
     if (Date.now() - duel.createdAt > MAX_AGE_MS) return null;
-    if (duel.bestSeconds !== null && seconds >= duel.bestSeconds) return duel;
-    const next = { ...duel, bestSeconds: seconds };
+    const next = change(duel);
     transaction.set(ref, next);
     return next;
   });
+}
+
+function readScore(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1_000_000) return undefined;
+  return value;
 }
 
 function isDifficulty(value: unknown): value is SudokuGuruDifficulty {

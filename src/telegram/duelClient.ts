@@ -16,6 +16,7 @@ export async function createDuel(input: {
   total: number;
   samples: PaceSample[];
   settings: GameSettingsType;
+  score: number;
 }): Promise<CreatedDuel | null> {
   const base = apiBase();
   const initData = window.Telegram?.WebApp?.initData;
@@ -33,6 +34,7 @@ export async function createDuel(input: {
         total: input.total,
         samples: compactPaceForSend(input.samples),
         settings: input.settings,
+        score: input.score,
       }),
     });
     if (!response.ok) return null;

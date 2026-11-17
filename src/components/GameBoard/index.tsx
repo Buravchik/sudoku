@@ -172,6 +172,16 @@ export default function GameBoard({
     if (highlightedCells.has(index)) classNames.push(styles.highlighted);
     if (obviousCells.has(index)) classNames.push(styles.obvious);
     if (selectedCell === index) classNames.push(styles.clicked);
+    const cell = cells[index];
+    if (
+      settings.highlightConflicts
+      && cell.initialValue === 0
+      && cell.userValue !== 0
+      && cell.solutionValue !== 0
+      && cell.userValue !== cell.solutionValue
+    ) {
+      classNames.push(styles.conflict);
+    }
     return classNames.join(' ');
   };
 

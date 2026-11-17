@@ -14,7 +14,12 @@ const SETTING_KEYS: (keyof GameSettingsType)[] = [
   'highlightQuadrantsWithSameNumber',
   'highlightAllObviousCells',
   'highlightObviousCellsForCurrentNumber',
+  'undoMoves',
+  'highlightConflicts',
+  'countMistakes',
 ];
+
+const OPTIONAL_OFF: (keyof GameSettingsType)[] = ['undoMoves', 'highlightConflicts', 'countMistakes'];
 
 export interface GhostRace {
   id: string;
@@ -59,8 +64,9 @@ export function readSettingsSnapshot(value: unknown): GameSettingsType | null {
   const record = value as Record<string, unknown>;
   const settings = {} as GameSettingsType;
   for (const key of SETTING_KEYS) {
-    if (typeof record[key] !== 'boolean') return null;
-    settings[key] = record[key];
+    if (typeof record[key] === 'boolean') settings[key] = record[key];
+    else if (OPTIONAL_OFF.includes(key)) settings[key] = false;
+    else return null;
   }
   return settings;
 }

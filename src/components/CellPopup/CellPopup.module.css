@@ -1,0 +1,129 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 13, 18, 0.4);
+}
+
+.sheet {
+  width: min(100%, 280px);
+  padding: 16px;
+  border-radius: 28px;
+  background: var(--header-bg);
+  color: var(--foreground);
+  animation: sheet-in var(--motion-spatial-fast) both;
+}
+
+@keyframes sheet-in {
+  from { transform: scale(0.92); }
+  to { transform: scale(1); }
+}
+
+.switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.track {
+  width: 52px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--secondary-container);
+  position: relative;
+  flex-shrink: 0;
+  transition: background-color var(--motion-effects);
+}
+
+.track::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--on-secondary-container);
+  transition: transform var(--motion-spatial-fast), background-color var(--motion-effects);
+}
+
+.switch input:checked + .track {
+  background: var(--primary);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(20px);
+  background: var(--on-primary);
+}
+
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px 0 12px;
+}
+
+.digit {
+  height: 56px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-container);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--motion-spatial-fast), background-color var(--motion-effects), color var(--motion-effects);
+}
+
+.digit:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.digit[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--on-primary);
+  animation: digit-in var(--motion-spatial-fast) both;
+}
+
+@keyframes digit-in {
+  from { transform: scale(0.84); }
+  to { transform: scale(1); }
+}
+
+.digit:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.clear {
+  width: 100%;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}

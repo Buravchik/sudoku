@@ -34,6 +34,10 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
   return <LangContext.Provider value={lang}>{children}</LangContext.Provider>;
 }
 
+export function useLang(): Lang {
+  return useContext(LangContext);
+}
+
 export function useMessages(): Copy {
-  return messages(useContext(LangContext));
+  return messages(useLang());
 }

@@ -13,11 +13,7 @@
     "bot:start": "tsx src/telegram/bot.ts"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
     "@google-cloud/firestore": "^9.4.1",
-    "@mui/icons-material": "^9.5.0",
-    "@mui/material": "^9.5.0",
     "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

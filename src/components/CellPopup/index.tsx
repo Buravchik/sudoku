@@ -5,15 +5,8 @@ import { useMessages } from '../Locale';
 import { isDigit } from '@/sudoku/cells';
 import { isValueAllowed } from '@/sudoku/rules';
 import { GameSettingsType } from '@/types';
-import {
-  Box,
-  Button,
-  Dialog,
-  ToggleButton,
-  Switch,
-  FormControlLabel,
-  styled,
-} from '@mui/material';
+import { useEffect } from 'react';
+import styles from './CellPopup.module.css';
 
 interface CellPopupProps {
   open: boolean;
@@ -30,26 +23,6 @@ interface CellPopupProps {
   settings: GameSettingsType;
 }
 
-const NumberGrid = styled(Box)({
-  display: 'grid',
-  gridTemplateColumns: 'repeat(3, 1fr)',
-  gap: 8,
-  padding: 16,
-});
-
-const NumberButton = styled(ToggleButton)({
-  width: 48,
-  height: 48,
-  fontSize: '1.2rem',
-  '&.invalid': {
-    opacity: 0.3,
-    cursor: 'not-allowed',
-    '&:hover': {
-      backgroundColor: 'inherit',
-    },
-  },
-});
-
 export default function CellPopup({
   open,
   onClose,
@@ -65,6 +38,18 @@ export default function CellPopup({
   settings,
 }: CellPopupProps) {
   const text = useMessages();
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
   const handlePencilModeChange = (checked: boolean) => {
     if (checked && selectedValue !== 0) {
       onClear();
@@ -94,39 +79,45 @@ export default function CellPopup({
     : settings.hideImpossibleValuesInSelector;
 
   return (
-    <Dialog open={open} onClose={onClose}>
-      <Box sx={{ p: 2 }}>
-        <FormControlLabel
-          control={
-            <Switch
-              checked={isPencilMode}
-              onChange={(event) => handlePencilModeChange(event.target.checked)}
-            />
-          }
-          label={text.pencil}
-        />
-        <NumberGrid>
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((number) => {
+    <div className={styles.scrim} onMouseDown={onClose}>
+      <div
+        className={styles.sheet}
+        role="dialog"
+        aria-modal="true"
+        aria-label={text.pencil}
+        onMouseDown={event => event.stopPropagation()}
+      >
+        <label className={styles.switch}>
+          <input
+            type="checkbox"
+            checked={isPencilMode}
+            onChange={event => handlePencilModeChange(event.target.checked)}
+          />
+          <span className={styles.track} aria-hidden="true" />
+          <span>{text.pencil}</span>
+        </label>
+        <div className={styles.grid}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(number => {
             const isValid = shouldCheckValidity ? isValueAllowed(cells, cellIndex, number) : true;
-
+            const pressed = isPencilMode ? hints[number - 1] : selectedValue === number;
             return (
-              <NumberButton
+              <button
                 key={number}
-                value={number}
-                selected={isPencilMode ? hints[number - 1] : selectedValue === number}
-                onClick={() => handleNumberClick(number)}
+                type="button"
+                className={styles.digit}
+                aria-pressed={pressed}
                 disabled={!isValid}
-                className={shouldCheckValidity && !isValid ? 'invalid' : ''}
+                onClick={() => handleNumberClick(number)}
               >
                 {number}
-              </NumberButton>
+              </button>
             );
           })}
-        </NumberGrid>
-        <Button fullWidth onClick={handleClear}>
+        </div>
+        <button type="button" className={styles.clear} onClick={handleClear}>
           {text.clear}
-        </Button>
-      </Box>
-    </Dialog>
+        </button>
+      </div>
+    </div>
   );
 }
