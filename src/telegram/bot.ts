@@ -474,7 +474,16 @@ async function editInlineMatch(match: StoredMatch): Promise<void> {
 
 async function handleMatchState(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; matchId?: unknown; settings?: unknown; forfeit?: unknown };
+    const body = await readJson(req) as {
+      initData?: unknown;
+      matchId?: unknown;
+      settings?: unknown;
+      forfeit?: unknown;
+      left?: unknown;
+      total?: unknown;
+      seconds?: unknown;
+      samples?: unknown;
+    };
     const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
     const id = matchIdFrom(signed?.startParam, body.matchId);
     if (!signed || !id) {
@@ -484,15 +493,27 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
     const noted = await noteMatchPlayer(id, signed.userId, signed.name, {
       settings: body.settings,
       forfeit: body.forfeit === true,
+      left: body.left,
+      total: body.total,
+      seconds: body.seconds,
+      samples: body.samples,
     });
-    if (noted?.changed) await editInlineMatch(noted.match);
+    if (noted?.refreshCard) await editInlineMatch(noted.match);
     const match = noted?.match ?? await readMatch(id);
     if (!match) {
       sendJson(res, 404, { ok: false });
       return;
     }
     const view = toMatchView(match, signed.userId);
-    sendJson(res, 200, { ok: true, difficulty: view.difficulty, level: view.level, leader: view.leader, settings: view.settings });
+    sendJson(res, 200, {
+      ok: true,
+      difficulty: view.difficulty,
+      level: view.level,
+      leader: view.leader,
+      settings: view.settings,
+      players: view.players,
+      rival: view.rival,
+    });
   } catch (error) {
     console.error('Failed to read an inline match.', error);
     sendJson(res, 500, { ok: false });

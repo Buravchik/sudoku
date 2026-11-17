@@ -55,8 +55,7 @@ export function renderMatch(
   if (entries.length === 0) lines.push(text.nobody);
   else {
     entries.slice(0, 10).forEach((entry, index) => {
-      const started = entry.startedAt ? `${formatJoined(entry.startedAt)} · ` : '';
-      lines.push(`${index + 1}. ${entry.name} — ${started}${formatSeconds(entry.seconds)}`);
+      lines.push(`${index + 1}. ${entry.name} — ${text.solved(formatSeconds(entry.seconds))}`);
     });
     if (entries.length > 10) lines.push(text.more(entries.length - 10));
   }

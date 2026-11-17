@@ -287,7 +287,10 @@
 .winBanner {
   margin: 0;
   text-align: center;
-  color: var(--primary);
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  border-radius: 20px;
+  padding: 12px 16px;
   font-size: 1.6rem;
   font-weight: 700;
   line-height: 1.2;

@@ -69,6 +69,7 @@ export default function GameWrapper() {
   const [liveRival, setLiveRival] = useState<LiveRival | null>(null);
   const [matchId, setMatchId] = useState<string | null>(session.matchId);
   const [matchLeader, setMatchLeader] = useState<GroupLeader | null>(null);
+  const [matchPlayers, setMatchPlayers] = useState<GroupPlayer[]>([]);
   const [sharing, setSharing] = useState(false);
   const [mistakes, setMistakes] = useState(session.mistakes);
   const [undoCount, setUndoCount] = useState(0);
@@ -272,9 +273,19 @@ export default function GameWrapper() {
     if (!storageReady || gameState !== 'playing' || !matchId) return;
     let cancelled = false;
     const send = async () => {
-      const race = await fetchMatchState(settingsRef.current);
+      const current = boardRef.current;
+      if (!current) return;
+      const race = await fetchMatchState({
+        settings: settingsRef.current,
+        left: cellsLeft(current.cells),
+        total: cellsToFill(current.cells),
+        seconds: Math.floor(timeRef.current),
+        samples: paceRef.current,
+      });
       if (cancelled || !race) return;
       setMatchLeader(race.leader);
+      setMatchPlayers(race.players);
+      setLiveRival(race.rival);
       if (race.settings && !sameSettings(settingsRef.current, race.settings)) setSettings(race.settings);
     };
     void send();
@@ -344,7 +355,7 @@ export default function GameWrapper() {
     }
     if (matchIdRef.current) {
       rememberDroppedChallenge(`i${matchIdRef.current}`);
-      void fetchMatchState(settingsRef.current, true);
+      void fetchMatchState({ settings: settingsRef.current, forfeit: true });
     }
     const daily = challengeRef.current;
     const current = boardRef.current;
@@ -368,6 +379,7 @@ export default function GameWrapper() {
     setGroupPlayers([]);
     setLiveRival(null);
     setMatchLeader(null);
+    setMatchPlayers([]);
   };
 
   const confirmPending = () => {
@@ -450,6 +462,7 @@ export default function GameWrapper() {
     setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
+    setMatchPlayers([]);
     setShareError(null);
     setSettings(loadSettings());
     setGameState('selectDifficulty');
@@ -569,6 +582,7 @@ export default function GameWrapper() {
     setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
+    setMatchPlayers([]);
     setSettings(loadSettings());
     setDifficultyState(launch.difficulty);
     setGroupPlace(null);
@@ -600,6 +614,7 @@ export default function GameWrapper() {
     setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
+    setMatchPlayers([]);
     setGroupPlace(null);
     setBoard(null);
     setGameState('notStarted');
@@ -634,6 +649,7 @@ export default function GameWrapper() {
     setLiveRival(null);
     setMatchId(id);
     setMatchLeader(null);
+    setMatchPlayers([]);
     setGroupPlace(null);
     setSettings(loadSettings());
     setBoard(null);
@@ -641,7 +657,7 @@ export default function GameWrapper() {
     setTime(0);
     clearStoredSession();
     try {
-      const race = await fetchMatchState(settingsRef.current);
+      const race = await fetchMatchState({ settings: settingsRef.current });
       if (!race) throw new Error('The shared puzzle is unavailable');
       const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
       if (race.settings) setSettings(race.settings);
@@ -670,6 +686,7 @@ export default function GameWrapper() {
     setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
+    setMatchPlayers([]);
     setSettings(loadSettings());
     setGroupPlace(null);
     setDifficultyState(difficulty);
@@ -761,6 +778,9 @@ export default function GameWrapper() {
       )}
       {matchId && activeBoard && (
         <p className={styles.notice}>{text.sharedPuzzle(text.difficulties[activeBoard.difficulty])}</p>
+      )}
+      {matchPlayers.length > 0 && activeBoard && (
+        <GroupField players={matchPlayers} />
       )}
       {challenge && groupPlayers.length > 0 && activeBoard && (
         <GroupField players={groupPlayers} />

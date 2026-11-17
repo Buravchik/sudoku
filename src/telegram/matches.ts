@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'fs/promises';
 import path from 'path';
 import { Lang } from '@/i18n';
 import { readSettingsSnapshot } from '@/sudoku/duel';
-import { PaceSample, sanitizePace } from '@/sudoku/pace';
+import { PaceSample, paceAt, pacePercent, sanitizePace } from '@/sudoku/pace';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
 
@@ -34,6 +34,10 @@ export interface MatchPresence {
   startedAt: number;
   settings?: GameSettingsType;
   forfeited?: boolean;
+  left?: number;
+  total?: number;
+  elapsed?: number;
+  samples?: PaceSample[];
 }
 
 export interface StoredMatch {
@@ -49,11 +53,20 @@ export interface StoredMatch {
   settings?: GameSettingsType;
 }
 
+export interface MatchPlayerView {
+  name: string;
+  left: number;
+  total: number;
+  finished: boolean;
+}
+
 export interface MatchView {
   difficulty: SudokuGuruDifficulty;
   level: number;
   leader: { name: string; seconds: number; total: number; samples: PaceSample[] } | null;
   settings: GameSettingsType | null;
+  players: MatchPlayerView[];
+  rival: { name: string; seconds: number; total: number; samples: PaceSample[] } | null;
 }
 
 interface MatchFile {
@@ -69,6 +82,7 @@ let chain: Promise<unknown> = Promise.resolve();
 
 export function toMatchView(match: StoredMatch, userId: number): MatchView {
   const leader = match.leader && match.leader.userId !== userId ? match.leader : undefined;
+  const you = match.present?.find(player => player.userId === userId);
   return {
     difficulty: match.difficulty,
     level: match.level,
@@ -76,6 +90,8 @@ export function toMatchView(match: StoredMatch, userId: number): MatchView {
       ? { name: leader.name, seconds: leader.seconds, total: leader.total, samples: leader.samples }
       : null,
     settings: match.settings ?? null,
+    players: matchPlayers(match, userId),
+    rival: matchRival(match, userId, you?.elapsed ?? 0),
   };
 }
 
@@ -158,8 +174,8 @@ export async function noteMatchPlayer(
   id: string,
   userId: number,
   name: string,
-  extras?: { settings?: unknown; forfeit?: boolean },
-): Promise<{ match: StoredMatch; changed: boolean } | null> {
+  extras?: { settings?: unknown; forfeit?: boolean; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
+): Promise<{ match: StoredMatch; changed: boolean; refreshCard: boolean } | null> {
   const clean = name.replace(/\s+/g, ' ').trim().slice(0, 32);
   if (!/^[a-f0-9]{16}$/.test(id) || !clean) return null;
   if (process.env.RECORDS_BACKEND === 'firestore') return noteFirestore(id, userId, clean, extras);
@@ -275,29 +291,83 @@ function addPlayer(
   match: StoredMatch | undefined,
   userId: number,
   name: string,
-  extras?: { settings?: unknown; forfeit?: boolean },
-): { match: StoredMatch; changed: boolean } | null {
+  extras?: { settings?: unknown; forfeit?: boolean; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
+): { match: StoredMatch; changed: boolean; refreshCard: boolean } | null {
   if (!match || !fresh(match)) return null;
   const locked = lockChallengeSettings(match, extras?.settings);
   const present = match.present ? [...match.present] : [];
   const existing = present.find(player => player.userId === userId);
   if (existing) {
     existing.name = name;
-    let changed = locked;
+    const progressChanged = writeProgress(existing, extras);
+    let refreshCard = locked;
     if (extras?.forfeit && !existing.forfeited) {
       existing.forfeited = true;
-      changed = true;
+      refreshCard = true;
     }
     match.present = present;
-    return { match, changed };
+    return { match, changed: refreshCard || progressChanged, refreshCard };
   }
-  match.present = [...present, {
+  const player: MatchPresence = {
     userId,
     name,
     startedAt: Date.now(),
     ...(extras?.forfeit ? { forfeited: true } : {}),
-  }];
-  return { match, changed: true };
+  };
+  writeProgress(player, extras);
+  match.present = [...present, player];
+  return { match, changed: true, refreshCard: true };
+}
+
+function writeProgress(
+  player: MatchPresence,
+  extras?: { left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
+): boolean {
+  const left = extras?.left;
+  const total = extras?.total;
+  const seconds = extras?.seconds;
+  if (typeof left !== 'number' || typeof total !== 'number' || typeof seconds !== 'number') return false;
+  if (!Number.isInteger(left) || !Number.isInteger(total) || !Number.isInteger(seconds)) return false;
+  if (total < 1 || total > 81 || left < 0 || left > total || seconds < 0 || seconds > MAX_SECONDS) return false;
+  const samples = sanitizePace(extras?.samples, total, seconds);
+  const same = player.left === left && player.total === total && player.elapsed === seconds && sameSamples(player.samples, samples);
+  player.left = left;
+  player.total = total;
+  player.elapsed = seconds;
+  if (samples) player.samples = samples;
+  return !same;
+}
+
+function sameSamples(left: PaceSample[] | undefined, right: PaceSample[] | null): boolean {
+  if (!left || !right || left.length !== right.length) return left === undefined && right === null;
+  return left.every((sample, index) => sample.t === right[index].t && sample.left === right[index].left);
+}
+
+function matchPlayers(match: StoredMatch, userId: number): MatchPlayerView[] {
+  return (match.present ?? [])
+    .filter(player => player.userId !== userId && !player.forfeited && typeof player.left === 'number' && typeof player.total === 'number')
+    .map(player => ({ name: player.name, left: player.left ?? 0, total: player.total ?? 0, finished: false }))
+    .sort((left, right) => pacePercent(right.total, right.left) - pacePercent(left.total, left.left) || left.name.localeCompare(right.name));
+}
+
+function matchRival(
+  match: StoredMatch,
+  userId: number,
+  youSeconds: number,
+): { name: string; seconds: number; total: number; samples: PaceSample[] } | null {
+  let best: MatchPresence | null = null;
+  let bestLeft = Number.POSITIVE_INFINITY;
+  for (const player of match.present ?? []) {
+    if (player.userId === userId || player.forfeited || !player.samples?.length || typeof player.total !== 'number') continue;
+    const shared = Math.min(youSeconds, player.elapsed ?? 0);
+    const left = paceAt(player.samples, shared, player.total).left;
+    if (left < bestLeft || (left === bestLeft && best && player.name.localeCompare(best.name) < 0)) {
+      best = player;
+      bestLeft = left;
+    }
+  }
+  if (!best?.samples || typeof best.total !== 'number') return null;
+  return { name: best.name, seconds: best.elapsed ?? 0, total: best.total, samples: best.samples };
 }
 
 function lockChallengeSettings(match: StoredMatch, incoming: unknown): boolean {
@@ -315,8 +385,8 @@ async function noteFirestore(
   id: string,
   userId: number,
   name: string,
-  extras?: { settings?: unknown; forfeit?: boolean },
-): Promise<{ match: StoredMatch; changed: boolean } | null> {
+  extras?: { settings?: unknown; forfeit?: boolean; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
+): Promise<{ match: StoredMatch; changed: boolean; refreshCard: boolean } | null> {
   const { Firestore } = await import('@google-cloud/firestore');
   const ref = new Firestore().doc(`matches/${id}`);
   return ref.firestore.runTransaction(async transaction => {
