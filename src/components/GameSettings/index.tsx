@@ -42,7 +42,8 @@ export default function GameSettings({ settings, onSettingChange, onApply, onClo
         ))}
       </div>
       <details className={styles.advanced}>
-        <summary className={styles.advancedSummary}>{text.combinationName}</summary>
+        <summary className={styles.advancedSummary}>{text.namedSettings}</summary>
+        <p className={styles.note}>{text.namedSettingsHint}</p>
         <div className={styles.nickname}>
           <label className={styles.field}>
             <span>{text.adjective}</span>

@@ -73,7 +73,8 @@ export interface Copy {
   settingsNamed: (name: string) => string;
   adjective: string;
   noun: string;
-  combinationName: string;
+  namedSettings: string;
+  namedSettingsHint: string;
   beat: (name: string, difficulty: string, theirs: string, yours: string) => string;
   cmdStart: string;
   cmdSudoku: string;
@@ -166,7 +167,8 @@ const copy: Record<Lang, Copy> = {
     settingsNamed: name => `Settings: ${name}`,
     adjective: 'Adjective',
     noun: 'Noun',
-    combinationName: 'Combination name',
+    namedSettings: 'Named Settings',
+    namedSettingsHint: 'Each name is one complete set of these checkboxes. A challenge card shows the name, and the other player gets the same options.',
     beat: (name, difficulty, theirs, yours) => `${name} solved your ${difficulty} puzzle in ${theirs}. Your time was ${yours}.`,
     cmdStart: 'Play Sudoku',
     cmdSudoku: 'Today’s puzzle and chat records',
@@ -257,7 +259,8 @@ const copy: Record<Lang, Copy> = {
     settingsNamed: name => `Настройки: ${name}`,
     adjective: 'Прилагательное',
     noun: 'Существительное',
-    combinationName: 'Имя набора',
+    namedSettings: 'Именованные настройки',
+    namedSettingsHint: 'Имя — это весь набор этих галочек. В карточке челленджа стоит имя, и соперник получает те же настройки.',
     beat: (name, difficulty, theirs, yours) => `${name} прошёл твой уровень ${difficulty} за ${theirs}. Твоё время — ${yours}.`,
     cmdStart: 'Играть в судоку',
     cmdSudoku: 'Сегодняшняя сетка и рекорды чата',

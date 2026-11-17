@@ -39,6 +39,14 @@
   cursor: pointer;
 }
 
+.note {
+  margin: 0;
+  padding: 0 4px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .nickname {
   display: flex;
   flex-direction: column;
