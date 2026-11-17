@@ -35,6 +35,8 @@ export interface Copy {
   behind: string;
   level: string;
   you: string;
+  youAt: (time: string) => string;
+  rivalAt: (name: string, time: string) => string;
   left: (n: number, percent: number) => string;
   aheadOf: (name: string, delta: string) => string;
   slower: (name: string, delta: string) => string;
@@ -89,6 +91,8 @@ const copy: Record<Lang, Copy> = {
     behind: 'Behind',
     level: 'Level',
     you: 'You',
+    youAt: time => `You at ${time}`,
+    rivalAt: (name, time) => `${name} at ${time}`,
     left: (n, percent) => `${n} left · ${percent}%`,
     aheadOf: (name, delta) => ` Ahead of ${name} by ${delta}.`,
     slower: (name, delta) => ` ${name} was faster by ${delta}.`,
@@ -159,6 +163,8 @@ const copy: Record<Lang, Copy> = {
     behind: 'Позади',
     level: 'Наравне',
     you: 'Ты',
+    youAt: time => `Ты на ${time}`,
+    rivalAt: (name, time) => `${name} на ${time}`,
     left: (n, percent) => `осталось ${n} · ${percent}%`,
     aheadOf: (name, delta) => ` Впереди ${name} на ${delta}.`,
     slower: (name, delta) => ` ${name} быстрее на ${delta}.`,

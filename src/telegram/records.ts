@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import path from 'path';
 import { Lang } from '@/i18n';
 import { DailyChallenge, todayKey } from '@/sudoku/daily';
-import { PaceSample, pacePercent, sanitizePace } from '@/sudoku/pace';
+import { PaceSample, paceAt, pacePercent, sanitizePace } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 
 const LIVE_STALE_MS = 90_000;
@@ -39,6 +39,8 @@ export interface LivePlayer {
   total: number;
   updatedAt: number;
   finished: boolean;
+  seconds?: number;
+  samples?: PaceSample[];
 }
 
 export interface RacePlayer {
@@ -48,9 +50,17 @@ export interface RacePlayer {
   finished: boolean;
 }
 
+export interface LiveRival {
+  name: string;
+  seconds: number;
+  total: number;
+  samples: PaceSample[];
+}
+
 export interface RaceView {
   leader: { name: string; seconds: number; total: number; samples: PaceSample[] } | null;
   players: RacePlayer[];
+  rival: LiveRival | null;
 }
 
 export interface ChallengeCard {
@@ -144,6 +154,8 @@ export function recordScore(
     playing.left = 0;
     playing.name = name;
     playing.updatedAt = Date.now();
+    delete playing.samples;
+    delete playing.seconds;
   }
 
   const record = chat.records[card.difficulty] ?? null;
@@ -168,6 +180,7 @@ export function touchProgress(
   name: string,
   left: number,
   total: number,
+  pace?: { seconds: number; samples: unknown },
 ): RaceView | null {
   if (!Number.isInteger(left) || !Number.isInteger(total) || total < 1 || total > 81 || left < 0 || left > total) {
     return null;
@@ -180,11 +193,17 @@ export function touchProgress(
   const now = Date.now();
   card.live ??= [];
   const existing = card.live.find(item => item.userId === userId);
+  const seconds = pace && Number.isInteger(pace.seconds) && pace.seconds >= 0 && pace.seconds <= MAX_SECONDS
+    ? pace.seconds
+    : 0;
+  const samples = pace ? sanitizePace(pace.samples, total, seconds) : null;
   if (existing?.finished) {
     existing.name = name;
     existing.updatedAt = now;
   } else {
-    const player: LivePlayer = { userId, name, left, total, updatedAt: now, finished: false };
+    const player: LivePlayer = { userId, name, left, total, updatedAt: now, finished: false, seconds };
+    if (samples) player.samples = samples;
+    else if (existing?.samples) player.samples = existing.samples;
     if (existing) Object.assign(existing, player);
     else card.live.push(player);
   }
@@ -205,7 +224,24 @@ export function touchProgress(
       ? { name: leader.name, seconds: leader.seconds, total: leader.total, samples: leader.samples }
       : null,
     players,
+    rival: pickLiveRival(card.live, userId, seconds),
   };
+}
+
+function pickLiveRival(players: readonly LivePlayer[], userId: number, youSeconds: number): LiveRival | null {
+  let best: LivePlayer | null = null;
+  let bestLeft = Number.POSITIVE_INFINITY;
+  for (const player of players) {
+    if (player.userId === userId || player.finished || !player.samples?.length) continue;
+    const shared = Math.min(youSeconds, player.seconds ?? 0);
+    const left = paceAt(player.samples, shared, player.total).left;
+    if (left < bestLeft || (left === bestLeft && best && player.name.localeCompare(best.name) < 0)) {
+      best = player;
+      bestLeft = left;
+    }
+  }
+  if (!best?.samples) return null;
+  return { name: best.name, seconds: best.seconds ?? 0, total: best.total, samples: best.samples };
 }
 
 async function updateFirestore<T>(update: (file: RecordFile) => T | Promise<T>): Promise<T> {

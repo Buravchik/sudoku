@@ -298,7 +298,7 @@ function startScoreServer(): http.Server {
 
 async function handleProgress(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; left?: unknown; total?: unknown };
+    const body = await readJson(req) as { initData?: unknown; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown };
     const initData = typeof body.initData === 'string' ? body.initData : '';
     const signed = readSignedInitData(initData, token);
     const challenge = signed ? parseStartParam(signed.startParam) : null;
@@ -308,12 +308,20 @@ async function handleProgress(req: http.IncomingMessage, res: http.ServerRespons
     }
     const left = typeof body.left === 'number' ? body.left : -1;
     const total = typeof body.total === 'number' ? body.total : -1;
-    const view = await withRecords(file => touchProgress(file, challenge, signed.userId, signed.name, left, total));
+    const view = await withRecords(file => touchProgress(
+      file,
+      challenge,
+      signed.userId,
+      signed.name,
+      left,
+      total,
+      { seconds: typeof body.seconds === 'number' ? Math.floor(body.seconds) : 0, samples: body.samples },
+    ));
     if (!view) {
       sendJson(res, 400, { ok: false });
       return;
     }
-    sendJson(res, 200, { ok: true, leader: view.leader, players: view.players });
+    sendJson(res, 200, { ok: true, leader: view.leader, players: view.players, rival: view.rival });
   } catch (error) {
     console.error('Failed to update the live race.', error);
     sendJson(res, 500, { ok: false });

@@ -31,7 +31,7 @@ import {
   sharePreparedMessage,
   telegramWebApp,
 } from '@/telegram/webApp';
-import { GroupLeader, GroupPlayer, submitGroupScore, syncGroupRace } from '@/telegram/submitScore';
+import { GroupLeader, GroupPlayer, LiveRival, submitGroupScore, syncGroupRace } from '@/telegram/submitScore';
 import { GameSettingsType } from '@/types';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { Dialog } from '@mui/material';
@@ -61,6 +61,7 @@ export default function GameWrapper() {
   const [shareError, setShareError] = useState<string | null>(null);
   const [groupLeader, setGroupLeader] = useState<GroupLeader | null>(null);
   const [groupPlayers, setGroupPlayers] = useState<GroupPlayer[]>([]);
+  const [liveRival, setLiveRival] = useState<LiveRival | null>(null);
   const [matchId, setMatchId] = useState<string | null>(session.matchId);
   const [matchLeader, setMatchLeader] = useState<GroupLeader | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -216,10 +217,16 @@ export default function GameWrapper() {
     const send = async () => {
       const current = boardRef.current;
       if (!current) return;
-      const race = await syncGroupRace(cellsLeft(current.cells), cellsToFill(current.cells));
+      const race = await syncGroupRace(
+        cellsLeft(current.cells),
+        cellsToFill(current.cells),
+        timeRef.current,
+        paceRef.current,
+      );
       if (cancelled || !race) return;
       setGroupLeader(race.leader);
       setGroupPlayers(race.players);
+      setLiveRival(race.rival);
     };
     void send();
     const id = window.setInterval(() => void send(), 3000);
@@ -280,6 +287,7 @@ export default function GameWrapper() {
     setGroupPlace(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
     setShareError(null);
@@ -378,6 +386,7 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
     setSettings(loadSettings());
@@ -407,6 +416,7 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
     setGroupPlace(null);
@@ -439,6 +449,7 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setLiveRival(null);
     setMatchId(id);
     setMatchLeader(null);
     setGroupPlace(null);
@@ -472,6 +483,7 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setLiveRival(null);
     setMatchId(null);
     setMatchLeader(null);
     setSettings(loadSettings());
@@ -529,6 +541,15 @@ export default function GameWrapper() {
           total={paceOpponent.total}
           time={time}
           youLeft={cellsLeft(activeBoard.cells)}
+        />
+      )}
+      {liveRival && activeBoard && gameState === 'playing' && (
+        <LiveSpeedStrip
+          rival={liveRival}
+          youTime={time}
+          youLeft={cellsLeft(activeBoard.cells)}
+          youTotal={cellsToFill(activeBoard.cells)}
+          youSamples={appendPace(paceRef.current, time, cellsLeft(activeBoard.cells))}
         />
       )}
       {matchId && activeBoard && (
@@ -710,7 +731,45 @@ function GroupField({ players }: { players: GroupPlayer[] }) {
   );
 }
 
-function RaceMeter({ label, left, percent }: { label: string; left: number; percent: number }) {
+function LiveSpeedStrip({
+  rival,
+  youTime,
+  youLeft,
+  youTotal,
+  youSamples,
+}: {
+  rival: LiveRival;
+  youTime: number;
+  youLeft: number;
+  youTotal: number;
+  youSamples: PaceSample[];
+}) {
+  const text = useMessages();
+  const shared = Math.min(youTime, rival.seconds);
+  const youThen = paceAt(youSamples, shared, youTotal);
+  const them = paceAt(rival.samples, shared, rival.total);
+  const youNowPercent = pacePercent(youTotal, youLeft);
+  const youThenPercent = pacePercent(youTotal, youThen.left);
+  const themPercent = pacePercent(rival.total, them.left);
+  const status = youThenPercent > themPercent ? text.ahead : youThenPercent < themPercent ? text.behind : text.level;
+  const earlier = shared < youTime;
+  const stamp = formatTime(shared);
+  return (
+    <div className={styles.race} aria-live="polite">
+      <RaceMeter label={text.you} left={youLeft} percent={youNowPercent} />
+      {earlier && <RaceMeter label={text.youAt(stamp)} left={youThen.left} percent={youThenPercent} ghost />}
+      <RaceMeter
+        label={earlier ? text.rivalAt(rival.name, stamp) : rival.name}
+        left={them.left}
+        percent={themPercent}
+        ghost={earlier}
+      />
+      <p className={styles.notice}>{status}</p>
+    </div>
+  );
+}
+
+function RaceMeter({ label, left, percent, ghost = false }: { label: string; left: number; percent: number; ghost?: boolean }) {
   const text = useMessages();
   return (
     <div className={styles.raceMeter}>
@@ -719,7 +778,7 @@ function RaceMeter({ label, left, percent }: { label: string; left: number; perc
         <span>{text.left(left, percent)}</span>
       </div>
       <div className={styles.raceTrack}>
-        <div className={styles.raceFill} style={{ width: `${percent}%` }} />
+        <div className={ghost ? styles.raceFillGhost : styles.raceFill} style={{ width: `${percent}%` }} />
       </div>
     </div>
   );
