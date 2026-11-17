@@ -51,6 +51,12 @@ export interface StoredMatch {
   present?: MatchPresence[];
   leader?: MatchLeader;
   settings?: GameSettingsType;
+  notices?: MatchNotice[];
+}
+
+export interface MatchNotice {
+  chatId: number;
+  messageId: number;
 }
 
 export interface MatchPlayerView {
@@ -168,6 +174,37 @@ function newMatch(inlineMessageId: string, difficulty: SudokuGuruDifficulty, lan
     entries: [],
     present: [],
   };
+}
+
+export async function rememberMatchNotice(id: string, chatId: number, messageId: number): Promise<StoredMatch | null> {
+  if (!/^[a-f0-9]{16}$/.test(id) || !Number.isInteger(chatId) || !Number.isInteger(messageId)) return null;
+  if (process.env.RECORDS_BACKEND === 'firestore') return noticeFirestore(id, chatId, messageId);
+  return withFile(file => {
+    const match = file.matches[id];
+    if (!match || !fresh(match)) return null;
+    appendNotice(match, chatId, messageId);
+    return match;
+  });
+}
+
+function appendNotice(match: StoredMatch, chatId: number, messageId: number): void {
+  const notices = match.notices ?? [];
+  if (notices.some(item => item.chatId === chatId && item.messageId === messageId)) return;
+  match.notices = [...notices, { chatId, messageId }].slice(-20);
+}
+
+async function noticeFirestore(id: string, chatId: number, messageId: number): Promise<StoredMatch | null> {
+  const { Firestore } = await import('@google-cloud/firestore');
+  const ref = new Firestore().doc(`matches/${id}`);
+  return ref.firestore.runTransaction(async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+    const match = snapshot.data() as StoredMatch;
+    if (!fresh(match)) return null;
+    appendNotice(match, chatId, messageId);
+    transaction.set(ref, match);
+    return match;
+  });
 }
 
 export async function noteMatchPlayer(

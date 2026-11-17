@@ -13,7 +13,7 @@ import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
 import { acceptDuel, bindDuelMessage, DuelGuest, forfeitDuelGuest, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
-import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
+import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, rememberMatchNotice, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -46,7 +46,7 @@ bot.start(async (ctx) => {
         : difficulty
           ? text.challengeTitle(text.difficulties[difficulty])
           : text.welcome;
-    await ctx.reply(title, {
+    const sent = await ctx.reply(title, {
       link_preview_options: { is_disabled: true },
       reply_markup: {
         inline_keyboard: [
@@ -55,6 +55,10 @@ bot.start(async (ctx) => {
         ],
       },
     });
+    if (openedMatch && sent && 'message_id' in sent) {
+      const saved = await rememberMatchNotice(openedMatch, ctx.chat.id, sent.message_id);
+      if (saved?.settings) await editInlineMatch(saved);
+    }
     return;
   }
   if (isGroup(ctx.chat.type)) {
@@ -453,10 +457,10 @@ async function handlePlayOpen(id: string, res: http.ServerResponse): Promise<voi
 const sentMatchCards = new Map<string, string>();
 
 async function editInlineMatch(match: StoredMatch): Promise<void> {
-  if (!match.inlineMessageId) return;
   const text = messages(match.lang);
   const body = renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings);
-  if (sentMatchCards.get(match.inlineMessageId) === body) return;
+  await editMatchNotices(match, body);
+  if (!match.inlineMessageId || sentMatchCards.get(match.inlineMessageId) === body) return;
   await bot.telegram.editMessageText(
     undefined,
     undefined,
@@ -477,6 +481,32 @@ async function editInlineMatch(match: StoredMatch): Promise<void> {
     if (isNotModified(error)) sentMatchCards.set(match.inlineMessageId, body);
     else console.error('Failed to refresh the inline match.', error);
   });
+}
+
+const sentPrivateCards = new Map<string, string>();
+
+async function editMatchNotices(match: StoredMatch, body: string): Promise<void> {
+  const text = messages(match.lang);
+  const url = new URL(webAppUrl);
+  url.searchParams.set('match', `i${match.id}`);
+  for (const notice of match.notices ?? []) {
+    const key = `${notice.chatId}:${notice.messageId}`;
+    if (sentPrivateCards.get(key) === body) continue;
+    await bot.telegram.editMessageText(notice.chatId, notice.messageId, undefined, body, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: text.play, web_app: { url: url.toString() } }],
+          [{ text: text.dropInChat, switch_inline_query: match.difficulty }],
+        ],
+      },
+      link_preview_options: { is_disabled: true },
+    }).then(() => {
+      sentPrivateCards.set(key, body);
+    }, error => {
+      if (isNotModified(error)) sentPrivateCards.set(key, body);
+      else console.error('Failed to refresh the private challenge card.', error);
+    });
+  }
 }
 
 async function handleMatchState(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
