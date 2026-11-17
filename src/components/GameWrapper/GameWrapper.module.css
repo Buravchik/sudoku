@@ -102,6 +102,39 @@
   color: var(--muted);
 }
 
+.race {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.raceMeter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.raceLabel {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.raceTrack {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--grid-line);
+  overflow: hidden;
+}
+
+.raceFill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--cell-selected-ring);
+}
+
 .winBanner {
   color: var(--win);
   font-weight: 600;

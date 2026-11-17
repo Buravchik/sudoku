@@ -223,12 +223,11 @@ export default function GameWrapper() {
     setTime(0);
   };
 
-  useEffect(() => {
-    if (!board || (gameState !== 'playing' && gameState !== 'won')) return;
+  if (board && (gameState === 'playing' || gameState === 'won')) {
     const solved = isSolved(board.cells);
     if (solved && gameState !== 'won') setGameState('won');
     if (!solved && gameState === 'won') setGameState('playing');
-  }, [board, gameState]);
+  }
 
   const handleCellValueChange = (index: number, value: Digit) => {
     hapticImpact();
@@ -411,7 +410,7 @@ export default function GameWrapper() {
         <p className={styles.notice}>Chat puzzle, {challenge.difficulty}.</p>
       )}
       {ghost && activeBoard && (
-        <p className={styles.notice}>{ghostLine(ghost, time, cellsLeft(activeBoard.cells))}</p>
+        <GhostRaceStrip ghost={ghost} time={time} youLeft={cellsLeft(activeBoard.cells)} />
       )}
       {activeBoard?.source === 'offline' && (
         <p className={styles.notice}>Online puzzles are unavailable. This round uses an offline puzzle.</p>
@@ -552,13 +551,28 @@ function canChallenge(board: LoadedPuzzle | null): boolean {
   return Boolean(telegramWebApp() && board?.level != null);
 }
 
-function ghostLine(ghost: GhostRace, time: number, youLeft: number): string {
-  const pace = paceAt(ghost.samples, time, ghost.total);
-  const percent = pacePercent(ghost.total, pace.left);
-  if (time >= ghost.seconds) {
-    return `${ghost.name} finished in ${formatTime(ghost.seconds)}. You have ${youLeft} left.`;
-  }
-  return `You: ${youLeft} left. ${ghost.name} at ${formatTime(time)}: ${pace.left} left, ${percent}%.`;
+function GhostRaceStrip({ ghost, time, youLeft }: { ghost: GhostRace; time: number; youLeft: number }) {
+  const theirs = paceAt(ghost.samples, time, ghost.total);
+  return (
+    <div className={styles.race} aria-live="polite">
+      <RaceMeter label="You" left={youLeft} percent={pacePercent(ghost.total, youLeft)} />
+      <RaceMeter label={ghost.name} left={theirs.left} percent={pacePercent(ghost.total, theirs.left)} />
+    </div>
+  );
+}
+
+function RaceMeter({ label, left, percent }: { label: string; left: number; percent: number }) {
+  return (
+    <div className={styles.raceMeter}>
+      <div className={styles.raceLabel}>
+        <span>{label}</span>
+        <span>{left} left · {percent}%</span>
+      </div>
+      <div className={styles.raceTrack}>
+        <div className={styles.raceFill} style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
 }
 
 function raceResult(ghost: GhostRace, time: number): string {

@@ -2,7 +2,7 @@ import { cellValue, isChangeable } from '@/sudoku/cells';
 import { boxStart, colOf, nakedSingleIndexes, nakedSingleIndexesForNumber, rowOf } from '@/sudoku/rules';
 import { Digit, SudokuCell } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import CellPopup from '../CellPopup';
 import styles from './GameBoard.module.css';
 
@@ -34,8 +34,6 @@ export default function GameBoard({
 }: GameBoardProps) {
   const [selectedForEdit, setSelectedForEdit] = useState<number | null>(null);
   const [clickedCell, setClickedCell] = useState<number | null>(null);
-  const [highlightedCells, setHighlightedCells] = useState<Set<number>>(new Set());
-  const [highlightedHints, setHighlightedHints] = useState<Set<number>>(new Set());
   const [isPencilMode, setIsPencilMode] = useState(false);
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
 
@@ -132,13 +130,14 @@ export default function GameBoard({
     return { cellHighlights, hintHighlights };
   }, []);
 
-  useEffect(() => {
-    if (clickedCell === null) return;
-    const value = cellValue(cells[clickedCell]);
-    const next = calculateHighlights(cells, clickedCell, value, settings);
-    setHighlightedCells(next.cellHighlights);
-    setHighlightedHints(next.hintHighlights);
+  const highlights = useMemo(() => {
+    if (clickedCell === null) {
+      return { cellHighlights: new Set<number>(), hintHighlights: new Set<number>() };
+    }
+    return calculateHighlights(cells, clickedCell, cellValue(cells[clickedCell]), settings);
   }, [cells, clickedCell, settings, calculateHighlights]);
+  const highlightedCells = highlights.cellHighlights;
+  const highlightedHints = highlights.hintHighlights;
 
   const obviousCells = useMemo(() => {
     if (settings.highlightAllObviousCells) return nakedSingleIndexes(cells);
