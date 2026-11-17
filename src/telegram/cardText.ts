@@ -23,7 +23,7 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
   if (card.entries.length === 0) lines.push(text.nobody);
   else {
     card.entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`${index + 1}. ${entry.name} — ${formatSeconds(entry.seconds)}`);
+      lines.push(`✓ ${index + 1}. ${entry.name} — ${formatSeconds(entry.seconds)}`);
     });
     if (card.entries.length > 10) lines.push(text.more(card.entries.length - 10));
   }
@@ -55,7 +55,7 @@ export function renderMatch(
   if (entries.length === 0) lines.push(text.nobody);
   else {
     entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`${index + 1}. ${entry.name} — ${text.solved(formatSeconds(entry.seconds))}`);
+      lines.push(`✓ ${index + 1}. ${entry.name} — ${formatSeconds(entry.seconds)}`);
     });
     if (entries.length > 10) lines.push(text.more(entries.length - 10));
   }

@@ -450,14 +450,18 @@ async function handlePlayOpen(id: string, res: http.ServerResponse): Promise<voi
   res.end(html);
 }
 
+const sentMatchCards = new Map<string, string>();
+
 async function editInlineMatch(match: StoredMatch): Promise<void> {
   if (!match.inlineMessageId) return;
   const text = messages(match.lang);
+  const body = renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings);
+  if (sentMatchCards.get(match.inlineMessageId) === body) return;
   await bot.telegram.editMessageText(
     undefined,
     undefined,
     match.inlineMessageId,
-    renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings),
+    body,
     {
       reply_markup: {
         inline_keyboard: [[{
@@ -467,8 +471,11 @@ async function editInlineMatch(match: StoredMatch): Promise<void> {
       },
       link_preview_options: { is_disabled: true },
     },
-  ).catch(error => {
-    if (!isNotModified(error)) console.error('Failed to refresh the inline match.', error);
+  ).then(() => {
+    sentMatchCards.set(match.inlineMessageId, body);
+  }, error => {
+    if (isNotModified(error)) sentMatchCards.set(match.inlineMessageId, body);
+    else console.error('Failed to refresh the inline match.', error);
   });
 }
 
@@ -498,7 +505,7 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
       seconds: body.seconds,
       samples: body.samples,
     });
-    if (noted?.refreshCard) await editInlineMatch(noted.match);
+    if (noted && (noted.refreshCard || noted.match.entries.length > 0)) await editInlineMatch(noted.match);
     const match = noted?.match ?? await readMatch(id);
     if (!match) {
       sendJson(res, 404, { ok: false });
