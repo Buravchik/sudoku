@@ -10,7 +10,7 @@ import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
 import { acceptDuel, readDuel, recordDuelResult, saveDuel, toGhost } from './duels';
-import { openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
+import { attachInlineMessage, createInlineMatch, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -89,20 +89,46 @@ bot.command('top', async (ctx) => {
 bot.on('inline_query', async (ctx) => {
   const lang = langFrom(ctx.from.language_code);
   const text = messages(lang);
-  const results = pickDifficulties(ctx.inlineQuery.query).map(difficulty => ({
-    type: 'article' as const,
-    id: difficulty,
-    title: text.challengeTitle(text.difficulties[difficulty]),
-    description: text.inlineDescription,
-    input_message_content: { message_text: renderMatch(lang, difficulty, []) },
-    reply_markup: {
-      inline_keyboard: [[{
-        text: text.play,
-        callback_data: `n:${difficultyCode(difficulty)}:${lang}`,
-      }]],
-    },
-  }));
-  await ctx.answerInlineQuery(results, { cache_time: 30, is_personal: true });
+  try {
+    const botUsername = await ensureUsername();
+    const matches = await Promise.all(
+      pickDifficulties(ctx.inlineQuery.query).map(difficulty => createInlineMatch(difficulty, lang)),
+    );
+    const results = matches.map(match => ({
+      type: 'article' as const,
+      id: match.id,
+      title: text.challengeTitle(text.difficulties[match.difficulty]),
+      description: text.inlineDescription,
+      input_message_content: { message_text: renderMatch(lang, match.difficulty, []) },
+      reply_markup: {
+        inline_keyboard: [[{
+          text: text.play,
+          url: `https://t.me/${botUsername}?startapp=i${match.id}`,
+        }]],
+      },
+    }));
+    await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
+  } catch (error) {
+    console.error('Failed to answer an inline query.', error);
+    const results = pickDifficulties(ctx.inlineQuery.query).map(difficulty => ({
+      type: 'article' as const,
+      id: difficulty,
+      title: text.challengeTitle(text.difficulties[difficulty]),
+      description: text.inlineDescription,
+      input_message_content: { message_text: renderMatch(lang, difficulty, []) },
+      reply_markup: {
+        inline_keyboard: [[{
+          text: text.play,
+          callback_data: `n:${difficultyCode(difficulty)}:${lang}`,
+        }]],
+      },
+    }));
+    await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true }).catch(() => undefined);
+  }
+});
+
+bot.on('chosen_inline_result', async (ctx) => {
+  await attachInlineMessage(ctx.chosenInlineResult.result_id, ctx.chosenInlineResult.inline_message_id ?? '');
 });
 
 bot.on('callback_query', async (ctx) => {
@@ -116,8 +142,8 @@ bot.on('callback_query', async (ctx) => {
   try {
     const match = await openInlineMatch(inlineMessageId, parsed.difficulty, parsed.lang);
     const link = await matchLink(match.id);
-    await ctx.answerCbQuery(undefined, { url: link });
     await editInlineMatch(match, link);
+    await ctx.answerCbQuery();
   } catch (error) {
     console.error('Failed to open an inline match.', error);
     await ctx.answerCbQuery().catch(() => undefined);
@@ -382,6 +408,7 @@ async function matchLink(id: string): Promise<string> {
 }
 
 async function editInlineMatch(match: StoredMatch, link: string): Promise<void> {
+  if (!match.inlineMessageId) return;
   const text = messages(match.lang);
   await bot.telegram.editMessageText(
     undefined,

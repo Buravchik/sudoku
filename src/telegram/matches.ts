@@ -63,6 +63,32 @@ export function toMatchView(match: StoredMatch, userId: number): MatchView {
   };
 }
 
+export async function createInlineMatch(difficulty: SudokuGuruDifficulty, lang: Lang): Promise<StoredMatch> {
+  const created = newMatch('', difficulty, lang);
+  if (process.env.RECORDS_BACKEND === 'firestore') {
+    const { Firestore } = await import('@google-cloud/firestore');
+    await new Firestore().doc(`matches/${created.id}`).set(created);
+    return created;
+  }
+  return withFile(file => {
+    file.matches[created.id] = created;
+    return created;
+  });
+}
+
+export async function attachInlineMessage(id: string, inlineMessageId: string): Promise<void> {
+  if (!/^[a-f0-9]{16}$/.test(id) || !inlineMessageId) return;
+  if (process.env.RECORDS_BACKEND === 'firestore') {
+    const { Firestore } = await import('@google-cloud/firestore');
+    await new Firestore().doc(`matches/${id}`).set({ inlineMessageId }, { merge: true });
+    return;
+  }
+  await withFile(file => {
+    const match = file.matches[id];
+    if (match) match.inlineMessageId = inlineMessageId;
+  });
+}
+
 export async function openInlineMatch(inlineMessageId: string, difficulty: SudokuGuruDifficulty, lang: Lang): Promise<StoredMatch> {
   if (process.env.RECORDS_BACKEND === 'firestore') return openFirestore(inlineMessageId, difficulty, lang);
   return withFile(file => {
