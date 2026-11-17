@@ -2,6 +2,8 @@ import { allowDeviceWrites, readDeviceItem, removeDeviceItem, writeDeviceItem } 
 import { emptyDrafts, isDigit } from './cells';
 import { GameSettingsType } from '@/types';
 import { DailyChallenge, buildStartParam, parseStartParam } from './daily';
+import { GhostRace, restoreGhost } from './duel';
+import { PaceSample, restorePace } from './pace';
 import { Digit, GlobalGameState, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from './types';
 
 const SETTINGS_KEY = 'sudokuGameSettings';
@@ -27,6 +29,8 @@ export interface StoredSession {
   board: LoadedPuzzle | null;
   elapsedSeconds: number;
   challenge: DailyChallenge | null;
+  pace: PaceSample[];
+  ghost: GhostRace | null;
 }
 
 const EMPTY_SESSION: StoredSession = {
@@ -35,6 +39,8 @@ const EMPTY_SESSION: StoredSession = {
   board: null,
   elapsedSeconds: 0,
   challenge: null,
+  pace: [],
+  ghost: null,
 };
 
 export function loadSettings(): GameSettingsType {
@@ -107,6 +113,8 @@ export function sessionFromJson(raw: string | null): StoredSession | null {
       board,
       elapsedSeconds: elapsedSecondsFrom(parsed.elapsedSeconds),
       challenge: restoreChallenge(parsed.challenge),
+      pace: restorePace(parsed.pace),
+      ghost: restoreGhost(parsed.ghost),
     };
   } catch (error) {
     console.error('Failed to restore game state:', error);
@@ -143,8 +151,11 @@ export function saveStoredSession(session: StoredSession): void {
     difficultyState: session.difficultyState,
     elapsedSeconds: session.elapsedSeconds,
     challenge: session.challenge,
+    pace: session.pace,
+    ghost: session.ghost,
     boardState: {
       difficulty: session.board.difficulty,
+      level: session.board.level,
       source: session.board.source,
       cells: session.board.cells.map(cell => ({
         initialValue: cell.initialValue,
@@ -170,8 +181,11 @@ interface StoredGameState {
   difficultyState: SudokuGuruDifficulty | '';
   elapsedSeconds: number;
   challenge?: DailyChallenge | null;
+  pace?: unknown;
+  ghost?: unknown;
   boardState: {
     difficulty: SudokuGuruDifficulty;
+    level?: number | null;
     source?: 'online' | 'offline';
     cells: StoredCell[];
   };
@@ -188,6 +202,7 @@ function restoreBoard(value: unknown): LoadedPuzzle | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as {
     difficulty?: unknown;
+    level?: unknown;
     source?: unknown;
     cells?: unknown;
   };
@@ -196,6 +211,7 @@ function restoreBoard(value: unknown): LoadedPuzzle | null {
   if (!cells) return null;
   return {
     difficulty: record.difficulty,
+    level: Number.isInteger(record.level) ? record.level as number : null,
     source: record.source === 'offline' ? 'offline' : 'online',
     cells,
   };

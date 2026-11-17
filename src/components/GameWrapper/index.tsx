@@ -2,7 +2,9 @@
 
 import { clearCell, resetProgress, setUserValue, toggleHint } from '@/sudoku/cells';
 import { DailyChallenge, parseStartParam } from '@/sudoku/daily';
-import { loadDailyPuzzle, loadPuzzle } from '@/sudoku/loadPuzzle';
+import { GhostRace, parseDuelId } from '@/sudoku/duel';
+import { loadDailyPuzzle, loadLevelPuzzle, loadPuzzle } from '@/sudoku/loadPuzzle';
+import { appendPace, cellsLeft, cellsToFill, paceAt, pacePercent, PaceSample } from '@/sudoku/pace';
 import { isSolved } from '@/sudoku/rules';
 import {
   clearStoredSession,
@@ -13,15 +15,17 @@ import {
   saveStoredSession,
 } from '@/sudoku/storage';
 import { Digit, LoadedPuzzle, SudokuGuruDifficulty } from '@/sudoku/types';
+import { createDuel, fetchDuel, reportDuelResult } from '@/telegram/duelClient';
 import {
   hapticImpact,
   hapticSelection,
   hapticSuccess,
   hasDeviceStorage,
-  setClosingConfirmation,
   publicShareUrl,
   readStartParam,
+  setClosingConfirmation,
   shareInTelegram,
+  sharePreparedMessage,
   telegramWebApp,
 } from '@/telegram/webApp';
 import { submitGroupScore } from '@/telegram/submitScore';
@@ -47,7 +51,10 @@ export default function GameWrapper() {
   const [storageReady, setStorageReady] = useState(() => !hasDeviceStorage());
   const [homeScreen, setHomeScreen] = useState<'unsupported' | 'unknown' | 'added' | 'missed' | null>(null);
   const [challenge, setChallenge] = useState<DailyChallenge | null>(session.challenge);
+  const [ghost, setGhost] = useState<GhostRace | null>(session.ghost);
   const [groupPlace, setGroupPlace] = useState<number | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
 
   const timeRef = useRef(time);
   const boardRef = useRef(board);
@@ -57,6 +64,8 @@ export default function GameWrapper() {
   const settingsRef = useRef(settings);
   const previousStateRef = useRef(gameState);
   const challengeRef = useRef(challenge);
+  const ghostRef = useRef(ghost);
+  const paceRef = useRef<PaceSample[]>(session.pace);
   const challengeLaunchStarted = useRef(false);
   timeRef.current = time;
   boardRef.current = board;
@@ -65,6 +74,7 @@ export default function GameWrapper() {
   storageReadyRef.current = storageReady;
   settingsRef.current = settings;
   challengeRef.current = challenge;
+  ghostRef.current = ghost;
 
   const persist = useRef(() => {
     if (!storageReadyRef.current) return;
@@ -74,6 +84,8 @@ export default function GameWrapper() {
       board: boardRef.current,
       elapsedSeconds: timeRef.current,
       challenge: challengeRef.current,
+      pace: paceRef.current,
+      ghost: ghostRef.current,
     });
   }).current;
 
@@ -91,6 +103,8 @@ export default function GameWrapper() {
         setBoard(restored.board);
         setTime(restored.elapsedSeconds);
         setChallenge(restored.challenge);
+        setGhost(restored.ghost);
+        paceRef.current = restored.pace;
         previousStateRef.current = restored.gameState;
       }
       setStorageReady(true);
@@ -101,9 +115,14 @@ export default function GameWrapper() {
   }, [storageReady]);
 
   useEffect(() => {
+    if ((gameState !== 'playing' && gameState !== 'won') || !board) return;
+    paceRef.current = appendPace(paceRef.current, timeRef.current, cellsLeft(board.cells));
+  }, [board, gameState]);
+
+  useEffect(() => {
     if (!storageReady) return;
     persist();
-  }, [gameState, difficultyState, board, challenge, persist, storageReady]);
+  }, [gameState, difficultyState, board, challenge, ghost, persist, storageReady]);
 
   useEffect(() => {
     setClosingConfirmation(storageReady && gameState === 'playing');
@@ -112,7 +131,14 @@ export default function GameWrapper() {
   useEffect(() => {
     if (!storageReady || challengeLaunchStarted.current) return;
     challengeLaunchStarted.current = true;
-    const launch = parseStartParam(readStartParam());
+    const param = readStartParam();
+    const duelId = parseDuelId(param);
+    if (duelId) {
+      if (ghostRef.current?.id === duelId && boardRef.current) return;
+      void startDuel(duelId);
+      return;
+    }
+    const launch = parseStartParam(param);
     if (!launch) return;
     const current = challengeRef.current;
     const sameCard = current?.cardId === launch.cardId && current.day === launch.day;
@@ -128,6 +154,7 @@ export default function GameWrapper() {
           if (result?.improved) setGroupPlace(result.place);
         });
       }
+      if (ghostRef.current) void reportDuelResult(ghostRef.current.id, timeRef.current);
     }
     previousStateRef.current = gameState;
   }, [gameState]);
@@ -184,8 +211,11 @@ export default function GameWrapper() {
 
   const handleNewGame = () => {
     clearStoredSession();
+    paceRef.current = [];
     setChallenge(null);
+    setGhost(null);
     setGroupPlace(null);
+    setShareError(null);
     setGameState('selectDifficulty');
     setBoard(null);
     setTime(0);
@@ -214,8 +244,42 @@ export default function GameWrapper() {
   };
 
   const handleShare = async () => {
+    const boardNow = boardRef.current;
+    const inTelegram = Boolean(telegramWebApp());
+    if (inTelegram && boardNow?.level != null && difficultyState) {
+      setSharing(true);
+      setShareError(null);
+      const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(boardNow.cells));
+      paceRef.current = samples;
+      const created = await createDuel({
+        difficulty: difficultyState,
+        level: boardNow.level,
+        seconds: timeRef.current,
+        total: cellsToFill(boardNow.cells),
+        samples,
+      });
+      setSharing(false);
+      if (!created) {
+        setShareError('Could not send the challenge.');
+        return;
+      }
+      const text = `Судоку · ${difficultyState} · ${formatTime(timeRef.current)}. Тот же уровень: на твоей секунде видно, сколько цифр оставалось у меня.`;
+      if (created.messageId && telegramWebApp()?.shareMessage) {
+        await sharePreparedMessage(created.messageId);
+        return;
+      }
+      if (shareInTelegram(text, created.link)) return;
+      try {
+        await navigator.clipboard.writeText(`${text} ${created.link}`);
+      } catch (error) {
+        console.error('Could not copy the challenge:', error);
+        setShareError('Could not send the challenge.');
+      }
+      return;
+    }
+
     const text = `Solved ${difficultyState || 'a'} sudoku in ${formatTime(time)}.`;
-    const url = publicShareUrl(Boolean(telegramWebApp()), readStartParam(), window.location.href);
+    const url = publicShareUrl(inTelegram, readStartParam(), window.location.href);
     if (shareInTelegram(text, url)) return;
     if (navigator.share) {
       try {
@@ -233,6 +297,7 @@ export default function GameWrapper() {
   };
 
   const handleReset = () => {
+    paceRef.current = [];
     setBoard(current => current ? { ...current, cells: current.cells.map(resetProgress) } : current);
     setTime(0);
     setGameState('playing');
@@ -240,7 +305,9 @@ export default function GameWrapper() {
 
   const startChallenge = async (launch: DailyChallenge) => {
     setIsLoading(true);
+    paceRef.current = [];
     setChallenge(launch);
+    setGhost(null);
     setDifficultyState(launch.difficulty);
     setGroupPlace(null);
     setBoard(null);
@@ -260,9 +327,38 @@ export default function GameWrapper() {
     }
   };
 
+  const startDuel = async (id: string) => {
+    setIsLoading(true);
+    paceRef.current = [];
+    setChallenge(null);
+    setGhost(null);
+    setGroupPlace(null);
+    setBoard(null);
+    setGameState('notStarted');
+    setTime(0);
+    clearStoredSession();
+    try {
+      const race = await fetchDuel(id);
+      if (!race) throw new Error('The challenge is unavailable');
+      const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
+      setGhost(race);
+      setDifficultyState(race.difficulty);
+      setBoard(puzzle);
+      setGameState('playing');
+    } catch (error) {
+      console.error('Failed to open the challenge:', error);
+      setBoard(null);
+      setGameState('error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
     setIsLoading(true);
+    paceRef.current = [];
     setChallenge(null);
+    setGhost(null);
     setGroupPlace(null);
     setDifficultyState(difficulty);
     setBoard(null);
@@ -308,6 +404,9 @@ export default function GameWrapper() {
       {challenge && activeBoard && (
         <p className={styles.notice}>Chat puzzle, {challenge.difficulty}.</p>
       )}
+      {ghost && activeBoard && (
+        <p className={styles.notice}>{ghostLine(ghost, time, cellsLeft(activeBoard.cells))}</p>
+      )}
       {activeBoard?.source === 'offline' && (
         <p className={styles.notice}>Online puzzles are unavailable. This round uses an offline puzzle.</p>
       )}
@@ -315,6 +414,7 @@ export default function GameWrapper() {
         <p className={styles.winBanner}>
           Solved in {formatTime(time)}.
           {groupPlace ? ` ${placeLabel(groupPlace)} in the chat today.` : ''}
+          {ghost ? raceResult(ghost, time) : ''}
         </p>
       )}
 
@@ -343,10 +443,11 @@ export default function GameWrapper() {
             )}
 
             {gameState === 'won' && (
-              <Button variant="outlined" onClick={() => void handleShare()} fullWidth>
-                Share result
+              <Button variant="outlined" onClick={() => void handleShare()} disabled={sharing} fullWidth>
+                {sharing ? 'Sending challenge...' : canChallenge(activeBoard) ? 'Challenge a friend' : 'Share result'}
               </Button>
             )}
+            {shareError && <p className={styles.errorText}>{shareError}</p>}
 
             {(homeScreen === 'missed' || homeScreen === 'unknown') && (
               <Button
@@ -439,6 +540,26 @@ function placeLabel(place: number): string {
     ? 'th'
     : mod10 === 1 ? 'st' : mod10 === 2 ? 'nd' : mod10 === 3 ? 'rd' : 'th';
   return `${place}${suffix}`;
+}
+
+function canChallenge(board: LoadedPuzzle | null): boolean {
+  return Boolean(telegramWebApp() && board?.level != null);
+}
+
+function ghostLine(ghost: GhostRace, time: number, youLeft: number): string {
+  const pace = paceAt(ghost.samples, time, ghost.total);
+  const percent = pacePercent(ghost.total, pace.left);
+  if (time >= ghost.seconds) {
+    return `${ghost.name} finished in ${formatTime(ghost.seconds)}. You have ${youLeft} left.`;
+  }
+  return `You: ${youLeft} left. ${ghost.name} at ${formatTime(time)}: ${pace.left} left, ${percent}%.`;
+}
+
+function raceResult(ghost: GhostRace, time: number): string {
+  const delta = Math.abs(time - ghost.seconds);
+  if (time < ghost.seconds) return ` Ahead of ${ghost.name} by ${formatTime(delta)}.`;
+  if (time > ghost.seconds) return ` ${ghost.name} was faster by ${formatTime(delta)}.`;
+  return ` Tied with ${ghost.name}.`;
 }
 
 function formatTime(totalSeconds: number): string {

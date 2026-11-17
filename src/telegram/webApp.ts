@@ -40,6 +40,7 @@ export interface TelegramWebApp {
   addToHomeScreen?: () => void;
   checkHomeScreenStatus?: (callback?: StatusCallback) => void;
   openTelegramLink?: (url: string) => void;
+  shareMessage?: (messageId: string, callback?: (sent: boolean) => void) => void;
   HapticFeedback?: {
     impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void;
     notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
@@ -163,6 +164,24 @@ export function publicShareUrl(inTelegram: boolean, startParam: string | null, h
   url.hash = '';
   url.search = '';
   return url.toString();
+}
+
+export function sharePreparedMessage(messageId: string): Promise<boolean> {
+  const webApp = telegramWebApp();
+  if (!webApp?.shareMessage) return Promise.resolve(false);
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (sent: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(sent);
+    };
+    try {
+      webApp.shareMessage!(messageId, finish);
+    } catch {
+      finish(false);
+    }
+  });
 }
 
 export function shareInTelegram(text: string, url: string): boolean {

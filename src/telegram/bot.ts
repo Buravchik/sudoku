@@ -3,10 +3,11 @@ import { Telegraf } from 'telegraf';
 import { version } from '../../package.json';
 import { parseDifficultyArg, parseStartParam } from '@/sudoku/daily';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
-import { playLink, renderCard } from './cardText';
+import { playLink, renderCard, formatSeconds } from './cardText';
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, withRecords } from './records';
+import { acceptDuel, readDuel, recordDuelResult, saveDuel, toGhost } from './duels';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -156,7 +157,7 @@ async function ensureUsername(): Promise<string> {
 function startScoreServer(): http.Server {
   const server = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -171,6 +172,18 @@ function startScoreServer(): http.Server {
     }
     if (req.method === 'POST' && path === '/telegram') {
       await handleTelegram(req, res);
+      return;
+    }
+    if (req.method === 'POST' && path === '/duel') {
+      await handleDuelCreate(req, res);
+      return;
+    }
+    if (req.method === 'POST' && path === '/duel/result') {
+      await handleDuelResult(req, res);
+      return;
+    }
+    if (req.method === 'GET' && path?.startsWith('/duel/')) {
+      await handleDuelRead(path.slice('/duel/'.length), res);
       return;
     }
     if (req.method !== 'POST' || path !== '/score') {
@@ -251,6 +264,130 @@ async function handleTelegram(req: http.IncomingMessage, res: http.ServerRespons
     console.error('Failed to handle a Telegram update.', error);
     res.writeHead(500);
     res.end();
+  }
+}
+
+async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await readJson(req) as {
+      initData?: unknown;
+      difficulty?: unknown;
+      level?: unknown;
+      seconds?: unknown;
+      total?: unknown;
+      samples?: unknown;
+    };
+    const initData = typeof body.initData === 'string' ? body.initData : '';
+    const signed = readSignedInitData(initData, token);
+    if (!signed) {
+      sendJson(res, 401, { ok: false });
+      return;
+    }
+    const accepted = acceptDuel({
+      userId: signed.userId,
+      name: signed.name,
+      difficulty: body.difficulty,
+      level: typeof body.level === 'number' ? body.level : -1,
+      seconds: typeof body.seconds === 'number' ? Math.floor(body.seconds) : -1,
+      total: typeof body.total === 'number' ? body.total : -1,
+      samples: body.samples,
+    });
+    if (!accepted) {
+      sendJson(res, 400, { ok: false });
+      return;
+    }
+    const duel = await saveDuel(accepted);
+    const botUsername = await ensureUsername();
+    const link = `https://t.me/${botUsername}?startapp=d${duel.id}`;
+    const messageId = await prepareChallengeMessage(signed.userId, duel, link);
+    sendJson(res, 200, { ok: true, id: duel.id, link, messageId });
+  } catch (error) {
+    console.error('Failed to create a duel.', error);
+    sendJson(res, 500, { ok: false });
+  }
+}
+
+async function handleDuelRead(id: string, res: http.ServerResponse): Promise<void> {
+  try {
+    const duel = await readDuel(id);
+    if (!duel) {
+      sendJson(res, 404, { ok: false });
+      return;
+    }
+    sendJson(res, 200, { ok: true, duel: toGhost(duel) });
+  } catch (error) {
+    console.error('Failed to read a duel.', error);
+    sendJson(res, 500, { ok: false });
+  }
+}
+
+async function handleDuelResult(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await readJson(req) as { initData?: unknown; id?: unknown; seconds?: unknown };
+    const initData = typeof body.initData === 'string' ? body.initData : '';
+    const signed = readSignedInitData(initData, token);
+    const id = typeof body.id === 'string' ? body.id : '';
+    const seconds = typeof body.seconds === 'number' ? Math.floor(body.seconds) : -1;
+    if (!signed) {
+      sendJson(res, 401, { ok: false });
+      return;
+    }
+    const existing = await readDuel(id);
+    if (!existing) {
+      sendJson(res, 404, { ok: false });
+      return;
+    }
+    const previousBest = existing.bestSeconds;
+    await recordDuelResult(id, seconds);
+    const beat = seconds < existing.seconds && (previousBest === null || seconds < previousBest);
+    if (beat && signed.userId !== existing.userId) {
+      const text = `${signed.name} прошёл твой уровень ${existing.difficulty} за ${formatSeconds(seconds)}. Твоё время — ${formatSeconds(existing.seconds)}.`;
+      await bot.telegram.sendMessage(existing.userId, text).catch(error => {
+        console.error('Failed to tell the challenger about the result.', error);
+      });
+    }
+    sendJson(res, 200, { ok: true, beat });
+  } catch (error) {
+    console.error('Failed to record a duel result.', error);
+    sendJson(res, 500, { ok: false });
+  }
+}
+
+async function prepareChallengeMessage(userId: number, duel: { id: string; name: string; difficulty: string; seconds: number }, link: string): Promise<string | null> {
+  const text = [
+    `Судоку · ${duel.difficulty}`,
+    `${duel.name} — ${formatSeconds(duel.seconds)}`,
+    'Тот же уровень. На твоей секунде видно, сколько цифр оставалось у меня.',
+  ].join('\n');
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/savePreparedInlineMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: userId,
+        allow_user_chats: true,
+        allow_group_chats: true,
+        result: {
+          type: 'article',
+          id: duel.id,
+          title: `${duel.name} · ${duel.difficulty} · ${formatSeconds(duel.seconds)}`,
+          description: 'Тот же уровень и мой темп',
+          input_message_content: { message_text: text },
+          reply_markup: {
+            inline_keyboard: [[{ text: 'Играть', url: link }]],
+          },
+        },
+      }),
+    });
+    const payload = await response.json() as { ok?: boolean; result?: { id?: string }; description?: string };
+    if (!payload.ok || !payload.result?.id) {
+      console.error('Failed to prepare the challenge message.', payload.description);
+      return null;
+    }
+    return payload.result.id;
+  } catch (error) {
+    console.error('Failed to prepare the challenge message.', error);
+    return null;
   }
 }
 

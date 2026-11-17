@@ -21,6 +21,7 @@ export type PuzzleSource = 'online' | 'offline';
 
 export interface LoadedPuzzle {
   difficulty: SudokuGuruDifficulty;
+  level: number | null;
   cells: SudokuCell[];
   source: PuzzleSource;
 }

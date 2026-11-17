@@ -21,7 +21,7 @@ export async function loadPuzzle(difficulty: SudokuGuruDifficulty): Promise<Load
     const levelNumber = randomLevelNumber();
     try {
       const cells = await fetchLevel(difficulty, levelNumber);
-      return { difficulty, cells, source: 'online' };
+      return { difficulty, level: levelNumber, cells, source: 'online' };
     } catch (error) {
       lastError = error;
       if (error instanceof PuzzleTransportError) break;
@@ -31,23 +31,34 @@ export async function loadPuzzle(difficulty: SudokuGuruDifficulty): Promise<Load
   console.error('Online puzzle load failed, using an offline puzzle.', lastError);
   return {
     difficulty,
+    level: null,
     cells: fallbackCells(difficulty),
     source: 'offline',
   };
 }
 
 export async function loadDailyPuzzle(difficulty: SudokuGuruDifficulty, day: string): Promise<LoadedPuzzle> {
+  const level = dailyLevel(day, difficulty);
   try {
-    const cells = await fetchLevel(difficulty, dailyLevel(day, difficulty));
-    return { difficulty, cells, source: 'online' };
+    const cells = await fetchLevel(difficulty, level);
+    return { difficulty, level, cells, source: 'online' };
   } catch (error) {
     console.error('Daily puzzle load failed, using an offline puzzle.', error);
     return {
       difficulty,
+      level: null,
       cells: fallbackCells(difficulty),
       source: 'offline',
     };
   }
+}
+
+export async function loadLevelPuzzle(difficulty: SudokuGuruDifficulty, level: number): Promise<LoadedPuzzle> {
+  if (!Number.isInteger(level) || level < SUDOKU_GURU_LEVEL_MIN || level > SUDOKU_GURU_LEVEL_MAX) {
+    throw new Error('Puzzle level is out of range');
+  }
+  const cells = await fetchLevel(difficulty, level);
+  return { difficulty, level, cells, source: 'online' };
 }
 
 function randomLevelNumber(): number {
