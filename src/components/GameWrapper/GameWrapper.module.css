@@ -248,48 +248,27 @@
   gap: 4px;
   background: var(--surface-container);
   border-radius: 16px;
-  padding: 8px 12px;
+  padding: 6px 12px;
 }
 
-.raceHead {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
+.raceMeter {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.raceHead > :first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.raceHead > :last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
-}
-
-.raceStatus {
-  font-weight: 700;
-}
-
-.raceTracks {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+.race .notice {
+  font-size: 12px;
+  line-height: 14px;
 }
 
 .raceLabel {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
+  font-size: 12px;
+  line-height: 14px;
+  color: var(--foreground);
 }
 
 .raceTrack {

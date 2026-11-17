@@ -771,6 +771,7 @@ export default function GameWrapper() {
         <LiveSpeedStrip
           rival={liveRival}
           youTime={time}
+          youLeft={cellsLeft(activeBoard.cells)}
           youTotal={cellsToFill(activeBoard.cells)}
           youSamples={appendPace(paceRef.current, time, cellsLeft(activeBoard.cells))}
         />
@@ -1009,15 +1010,11 @@ function GhostRaceStrip({
   const theirPercent = pacePercent(total, theirs.left);
   const status = youPercent > theirPercent ? text.ahead : youPercent < theirPercent ? text.behind : text.level;
   return (
-    <RaceStrip
-      youLabel={text.you}
-      youLeft={youLeft}
-      youPercent={youPercent}
-      themLabel={name}
-      themLeft={theirs.left}
-      themPercent={theirPercent}
-      status={status}
-    />
+    <div className={styles.race} aria-live="polite">
+      <RaceMeter label={text.you} left={youLeft} percent={youPercent} />
+      <RaceMeter label={name} left={theirs.left} percent={theirPercent} />
+      <p className={styles.notice}>{status}</p>
+    </div>
   );
 }
 
@@ -1038,11 +1035,13 @@ function GroupField({ players }: { players: GroupPlayer[] }) {
 function LiveSpeedStrip({
   rival,
   youTime,
+  youLeft,
   youTotal,
   youSamples,
 }: {
   rival: LiveRival;
   youTime: number;
+  youLeft: number;
   youTotal: number;
   youSamples: PaceSample[];
 }) {
@@ -1050,57 +1049,37 @@ function LiveSpeedStrip({
   const shared = Math.min(youTime, rival.seconds);
   const youThen = paceAt(youSamples, shared, youTotal);
   const them = paceAt(rival.samples, shared, rival.total);
+  const youNowPercent = pacePercent(youTotal, youLeft);
   const youThenPercent = pacePercent(youTotal, youThen.left);
   const themPercent = pacePercent(rival.total, them.left);
   const status = youThenPercent > themPercent ? text.ahead : youThenPercent < themPercent ? text.behind : text.level;
+  const earlier = shared < youTime;
+  const stamp = formatTime(shared);
   return (
-    <RaceStrip
-      youLabel={text.you}
-      youLeft={youThen.left}
-      youPercent={youThenPercent}
-      themLabel={rival.name}
-      themLeft={them.left}
-      themPercent={themPercent}
-      status={status}
-      ghost
-    />
+    <div className={styles.race} aria-live="polite">
+      <RaceMeter label={text.you} left={youLeft} percent={youNowPercent} />
+      {earlier && <RaceMeter label={text.youAt(stamp)} left={youThen.left} percent={youThenPercent} ghost />}
+      <RaceMeter
+        label={earlier ? text.rivalAt(rival.name, stamp) : rival.name}
+        left={them.left}
+        percent={themPercent}
+        ghost={earlier}
+      />
+      <p className={styles.notice}>{status}</p>
+    </div>
   );
 }
 
-function RaceStrip({
-  youLabel,
-  youLeft,
-  youPercent,
-  themLabel,
-  themLeft,
-  themPercent,
-  status,
-  ghost = false,
-}: {
-  youLabel: string;
-  youLeft: number;
-  youPercent: number;
-  themLabel: string;
-  themLeft: number;
-  themPercent: number;
-  status: string;
-  ghost?: boolean;
-}) {
+function RaceMeter({ label, left, percent, ghost = false }: { label: string; left: number; percent: number; ghost?: boolean }) {
   const text = useMessages();
   return (
-    <div className={styles.race} aria-live="polite" aria-label={`${text.left(youLeft, youPercent)}. ${status}. ${themLabel} ${text.left(themLeft, themPercent)}`}>
-      <div className={styles.raceHead}>
-        <span>{youLabel} {youLeft}</span>
-        <span className={styles.raceStatus}>{status}</span>
-        <span>{themLabel} {themLeft}</span>
+    <div className={styles.raceMeter}>
+      <div className={styles.raceLabel}>
+        <span>{label}</span>
+        <span>{text.left(left, percent)}</span>
       </div>
-      <div className={styles.raceTracks}>
-        <div className={styles.raceTrack}>
-          <div className={styles.raceFill} style={{ width: `${youPercent}%` }} />
-        </div>
-        <div className={styles.raceTrack}>
-          <div className={ghost ? styles.raceFillGhost : styles.raceFill} style={{ width: `${themPercent}%` }} />
-        </div>
+      <div className={styles.raceTrack}>
+        <div className={ghost ? styles.raceFillGhost : styles.raceFill} style={{ width: `${percent}%` }} />
       </div>
     </div>
   );
