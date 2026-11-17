@@ -22,6 +22,14 @@ export interface DailyChallenge {
   cardId: string;
 }
 
+export function difficultyCode(difficulty: SudokuGuruDifficulty): string {
+  return CODE_BY_DIFFICULTY[difficulty];
+}
+
+export function difficultyFromCode(code: string): SudokuGuruDifficulty | null {
+  return DIFFICULTY_BY_CODE[code] ?? null;
+}
+
 export function todayKey(now = new Date()): string {
   return now.toISOString().slice(0, 10).replace(/-/g, '');
 }

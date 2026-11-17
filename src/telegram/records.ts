@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import path from 'path';
+import { Lang } from '@/i18n';
 import { DailyChallenge, todayKey } from '@/sudoku/daily';
 import { PaceSample, pacePercent, sanitizePace } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
@@ -58,6 +59,7 @@ export interface ChallengeCard {
   difficulty: SudokuGuruDifficulty;
   messageId: number;
   entries: ScoreEntry[];
+  lang?: Lang;
   leader?: LeaderPace;
   live?: LivePlayer[];
 }
@@ -87,7 +89,7 @@ export function withRecords<T>(update: (file: RecordFile) => T | Promise<T>): Pr
   return run;
 }
 
-export function findTodayCard(file: RecordFile, chatId: number, difficulty: SudokuGuruDifficulty, day = todayKey()): ChallengeCard {
+export function findTodayCard(file: RecordFile, chatId: number, difficulty: SudokuGuruDifficulty, lang: Lang, day = todayKey()): ChallengeCard {
   const chat = chatState(file, chatId);
   const existing = chat.cards.find(card => card.day === day && card.difficulty === difficulty);
   if (existing) return existing;
@@ -95,6 +97,7 @@ export function findTodayCard(file: RecordFile, chatId: number, difficulty: Sudo
     id: randomBytes(4).toString('hex'),
     day,
     difficulty,
+    lang,
     messageId: 0,
     entries: [],
   };
@@ -132,9 +135,8 @@ export function recordScore(
   const place = card.entries.findIndex(entry => entry.userId === userId) + 1;
   if (place === 1 && improved) {
     const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
-    card.leader = samples && pace
-      ? { userId, name, seconds, total: pace.total, samples }
-      : undefined;
+    if (samples && pace) card.leader = { userId, name, seconds, total: pace.total, samples };
+    else delete card.leader;
   }
   const playing = card.live?.find(player => player.userId === userId);
   if (playing) {

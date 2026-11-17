@@ -2,6 +2,7 @@ import { allowDeviceWrites, readDeviceItem, removeDeviceItem, writeDeviceItem } 
 import { emptyDrafts, isDigit } from './cells';
 import { GameSettingsType } from '@/types';
 import { DailyChallenge, buildStartParam, parseStartParam } from './daily';
+import { parseMatchId } from './match';
 import { GhostRace, restoreGhost } from './duel';
 import { PaceSample, restorePace } from './pace';
 import { Digit, GlobalGameState, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from './types';
@@ -31,6 +32,7 @@ export interface StoredSession {
   challenge: DailyChallenge | null;
   pace: PaceSample[];
   ghost: GhostRace | null;
+  matchId: string | null;
 }
 
 const EMPTY_SESSION: StoredSession = {
@@ -41,6 +43,7 @@ const EMPTY_SESSION: StoredSession = {
   challenge: null,
   pace: [],
   ghost: null,
+  matchId: null,
 };
 
 export function loadSettings(): GameSettingsType {
@@ -115,6 +118,7 @@ export function sessionFromJson(raw: string | null): StoredSession | null {
       challenge: restoreChallenge(parsed.challenge),
       pace: restorePace(parsed.pace),
       ghost: restoreGhost(parsed.ghost),
+      matchId: parseMatchId(typeof parsed.matchId === 'string' ? `i${parsed.matchId}` : null),
     };
   } catch (error) {
     console.error('Failed to restore game state:', error);
@@ -153,6 +157,7 @@ export function saveStoredSession(session: StoredSession): void {
     challenge: session.challenge,
     pace: session.pace,
     ghost: session.ghost,
+    matchId: session.matchId,
     boardState: {
       difficulty: session.board.difficulty,
       level: session.board.level,
@@ -183,6 +188,7 @@ interface StoredGameState {
   challenge?: DailyChallenge | null;
   pace?: unknown;
   ghost?: unknown;
+  matchId?: unknown;
   boardState: {
     difficulty: SudokuGuruDifficulty;
     level?: number | null;

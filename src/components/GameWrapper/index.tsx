@@ -4,6 +4,8 @@ import { clearCell, resetProgress, setUserValue, toggleHint } from '@/sudoku/cel
 import { DailyChallenge, parseStartParam } from '@/sudoku/daily';
 import { GhostRace, parseDuelId } from '@/sudoku/duel';
 import { loadDailyPuzzle, loadLevelPuzzle, loadPuzzle } from '@/sudoku/loadPuzzle';
+import { Copy } from '@/i18n';
+import { parseMatchId } from '@/sudoku/match';
 import { appendPace, cellsLeft, cellsToFill, paceAt, pacePercent, PaceSample } from '@/sudoku/pace';
 import { isSolved } from '@/sudoku/rules';
 import {
@@ -16,6 +18,7 @@ import {
 } from '@/sudoku/storage';
 import { Digit, LoadedPuzzle, SudokuGuruDifficulty } from '@/sudoku/types';
 import { createDuel, fetchDuel, reportDuelResult } from '@/telegram/duelClient';
+import { fetchMatchState, reportMatchResult } from '@/telegram/matchClient';
 import {
   hapticImpact,
   hapticSelection,
@@ -37,9 +40,11 @@ import { Stack } from '@mui/system';
 import { useEffect, useRef, useState } from 'react';
 import GameBoard from '../GameBoard';
 import GameSettings from '../GameSettings';
+import { useMessages } from '../Locale';
 import styles from './GameWrapper.module.css';
 
 export default function GameWrapper() {
+  const text = useMessages();
   const [session] = useState(loadStoredSession);
   const [gameState, setGameState] = useState(session.gameState);
   const [difficultyState, setDifficultyState] = useState(session.difficultyState);
@@ -56,6 +61,8 @@ export default function GameWrapper() {
   const [shareError, setShareError] = useState<string | null>(null);
   const [groupLeader, setGroupLeader] = useState<GroupLeader | null>(null);
   const [groupPlayers, setGroupPlayers] = useState<GroupPlayer[]>([]);
+  const [matchId, setMatchId] = useState<string | null>(session.matchId);
+  const [matchLeader, setMatchLeader] = useState<GroupLeader | null>(null);
   const [sharing, setSharing] = useState(false);
 
   const timeRef = useRef(time);
@@ -67,6 +74,7 @@ export default function GameWrapper() {
   const previousStateRef = useRef(gameState);
   const challengeRef = useRef(challenge);
   const ghostRef = useRef(ghost);
+  const matchIdRef = useRef(matchId);
   const paceRef = useRef<PaceSample[]>(session.pace);
   const challengeLaunchStarted = useRef(false);
   timeRef.current = time;
@@ -77,6 +85,7 @@ export default function GameWrapper() {
   settingsRef.current = settings;
   challengeRef.current = challenge;
   ghostRef.current = ghost;
+  matchIdRef.current = matchId;
 
   const persist = useRef(() => {
     if (!storageReadyRef.current) return;
@@ -88,6 +97,7 @@ export default function GameWrapper() {
       challenge: challengeRef.current,
       pace: paceRef.current,
       ghost: ghostRef.current,
+      matchId: matchIdRef.current,
     });
   }).current;
 
@@ -106,6 +116,7 @@ export default function GameWrapper() {
         setTime(restored.elapsedSeconds);
         setChallenge(restored.challenge);
         setGhost(restored.ghost);
+        setMatchId(restored.matchId);
         if (restored.ghost) setSettings(restored.ghost.settings);
         paceRef.current = restored.pace;
         previousStateRef.current = restored.gameState;
@@ -125,7 +136,7 @@ export default function GameWrapper() {
   useEffect(() => {
     if (!storageReady) return;
     persist();
-  }, [gameState, difficultyState, board, challenge, ghost, persist, storageReady]);
+  }, [gameState, difficultyState, board, challenge, ghost, matchId, persist, storageReady]);
 
   useEffect(() => {
     setClosingConfirmation(storageReady && gameState === 'playing');
@@ -139,6 +150,12 @@ export default function GameWrapper() {
     if (duelId) {
       if (ghostRef.current?.id === duelId && boardRef.current) return;
       void startDuel(duelId);
+      return;
+    }
+    const openedMatch = parseMatchId(param);
+    if (openedMatch) {
+      if (matchIdRef.current === openedMatch && boardRef.current) return;
+      void startMatch(openedMatch);
       return;
     }
     const launch = parseStartParam(param);
@@ -159,6 +176,11 @@ export default function GameWrapper() {
         void submitGroupScore(timeRef.current, samples, cellsToFill(finishedBoard.cells)).then(result => {
           if (result?.improved) setGroupPlace(result.place);
         });
+      }
+      if (matchIdRef.current && finishedBoard?.source === 'online') {
+        const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(finishedBoard.cells));
+        paceRef.current = samples;
+        void reportMatchResult(timeRef.current, samples, cellsToFill(finishedBoard.cells));
       }
       if (ghostRef.current) void reportDuelResult(ghostRef.current.id, timeRef.current);
     }
@@ -208,6 +230,22 @@ export default function GameWrapper() {
   }, [gameState, storageReady, challenge]);
 
   useEffect(() => {
+    if (!storageReady || gameState !== 'playing' || !matchId) return;
+    let cancelled = false;
+    const send = async () => {
+      const race = await fetchMatchState();
+      if (cancelled || !race) return;
+      setMatchLeader(race.leader);
+    };
+    void send();
+    const id = window.setInterval(() => void send(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gameState, storageReady, matchId]);
+
+  useEffect(() => {
     if (gameState !== 'playing') return;
     const id = window.setInterval(() => persist(), 5000);
     return () => window.clearInterval(id);
@@ -242,6 +280,8 @@ export default function GameWrapper() {
     setGroupPlace(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setMatchId(null);
+    setMatchLeader(null);
     setShareError(null);
     setSettings(loadSettings());
     setGameState('selectDifficulty');
@@ -288,37 +328,37 @@ export default function GameWrapper() {
       });
       setSharing(false);
       if (!created) {
-        setShareError('Could not send the challenge.');
+        setShareError(text.shareFailed);
         return;
       }
-      const text = `Судоку · ${difficultyState} · ${formatTime(timeRef.current)}. Тот же уровень и те же настройки: на твоей секунде видно, сколько цифр оставалось у меня.`;
+      const challengeText = text.shareChallenge(difficultyState, formatTime(timeRef.current));
       if (created.messageId && telegramWebApp()?.shareMessage) {
         await sharePreparedMessage(created.messageId);
         return;
       }
-      if (shareInTelegram(text, created.link)) return;
+      if (shareInTelegram(challengeText, created.link)) return;
       try {
-        await navigator.clipboard.writeText(`${text} ${created.link}`);
+        await navigator.clipboard.writeText(`${challengeText} ${created.link}`);
       } catch (error) {
         console.error('Could not copy the challenge:', error);
-        setShareError('Could not send the challenge.');
+        setShareError(text.shareFailed);
       }
       return;
     }
 
-    const text = `Solved ${difficultyState || 'a'} sudoku in ${formatTime(time)}.`;
+    const solvedText = text.shareSolved(difficultyState || 'a', formatTime(time));
     const url = publicShareUrl(inTelegram, readStartParam(), window.location.href);
-    if (shareInTelegram(text, url)) return;
+    if (shareInTelegram(solvedText, url)) return;
     if (navigator.share) {
       try {
-        await navigator.share({ text, url });
+        await navigator.share({ text: solvedText, url });
         return;
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return;
       }
     }
     try {
-      await navigator.clipboard.writeText(`${text} ${url}`);
+      await navigator.clipboard.writeText(`${solvedText} ${url}`);
     } catch (error) {
       console.error('Could not share the result:', error);
     }
@@ -338,6 +378,8 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setMatchId(null);
+    setMatchLeader(null);
     setSettings(loadSettings());
     setDifficultyState(launch.difficulty);
     setGroupPlace(null);
@@ -365,6 +407,8 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setMatchId(null);
+    setMatchLeader(null);
     setGroupPlace(null);
     setBoard(null);
     setGameState('notStarted');
@@ -388,6 +432,39 @@ export default function GameWrapper() {
     }
   };
 
+  const startMatch = async (id: string) => {
+    setIsLoading(true);
+    paceRef.current = [];
+    setChallenge(null);
+    setGhost(null);
+    setGroupLeader(null);
+    setGroupPlayers([]);
+    setMatchId(id);
+    setMatchLeader(null);
+    setGroupPlace(null);
+    setSettings(loadSettings());
+    setBoard(null);
+    setGameState('notStarted');
+    setTime(0);
+    clearStoredSession();
+    try {
+      const race = await fetchMatchState();
+      if (!race) throw new Error('The shared puzzle is unavailable');
+      const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
+      setMatchLeader(race.leader);
+      setDifficultyState(race.difficulty);
+      setBoard(puzzle);
+      setGameState('playing');
+    } catch (error) {
+      console.error('Failed to open the shared puzzle:', error);
+      setMatchId(null);
+      setBoard(null);
+      setGameState('error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
     setIsLoading(true);
     paceRef.current = [];
@@ -395,6 +472,8 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
+    setMatchId(null);
+    setMatchLeader(null);
     setSettings(loadSettings());
     setGroupPlace(null);
     setDifficultyState(difficulty);
@@ -417,30 +496,31 @@ export default function GameWrapper() {
   };
 
   const activeBoard = gameState === 'playing' || gameState === 'won' ? board : null;
-  const paceOpponent = ghost ?? (gameState === 'playing' ? groupLeader : null);
+  const paceOpponent = ghost ?? (gameState === 'playing' ? (groupLeader ?? matchLeader) : null);
+  const difficultyName = difficultyState ? text.difficulties[difficultyState] : null;
 
   return (
     <div className={`${styles.gameWrapper} game-shell`}>
       <div className={`${styles.gameHeader} game-header`}>
         <div className={styles.title}>
           <span className={styles.difficulty}>
-            {difficultyState ? `Game - ${difficultyState}` : 'Game'}
+            {text.gameTitle(difficultyName)}
           </span>
           <span className={styles.timer}>
-            {" - Time: "}{formatTime(time)}
+            {text.timeTitle(formatTime(time))}
           </span>
         </div>
         <Button
           className={styles.settingsButton}
           onClick={() => setIsSettingsOpen(true)}
-          aria-label="Settings"
+          aria-label={text.settings}
         >
           <SettingsIcon />
         </Button>
       </div>
 
       {challenge && activeBoard && (
-        <p className={styles.notice}>Chat puzzle, {challenge.difficulty}.</p>
+        <p className={styles.notice}>{text.chatPuzzle(text.difficulties[challenge.difficulty])}</p>
       )}
       {paceOpponent && activeBoard && (
         <GhostRaceStrip
@@ -451,23 +531,27 @@ export default function GameWrapper() {
           youLeft={cellsLeft(activeBoard.cells)}
         />
       )}
+      {matchId && activeBoard && (
+        <p className={styles.notice}>{text.sharedPuzzle(text.difficulties[activeBoard.difficulty])}</p>
+      )}
       {challenge && groupPlayers.length > 0 && activeBoard && (
         <GroupField players={groupPlayers} />
       )}
       {activeBoard?.source === 'offline' && (
-        <p className={styles.notice}>Online puzzles are unavailable. This round uses an offline puzzle.</p>
+        <p className={styles.notice}>{text.offline}</p>
       )}
       {gameState === 'won' && (
         <p className={styles.winBanner}>
-          Solved in {formatTime(time)}.
-          {groupPlace ? ` ${placeLabel(groupPlace)} in the chat today.` : ''}
-          {ghost ? raceResult(ghost, time) : ''}
-          {!ghost && groupLeader ? raceResult(groupLeader, time) : ''}
+          {text.solved(formatTime(time))}
+          {groupPlace ? ` ${text.place(groupPlace)}` : ''}
+          {ghost ? raceResult(text, ghost, time) : ''}
+          {!ghost && groupLeader ? raceResult(text, groupLeader, time) : ''}
+          {!ghost && !groupLeader && matchLeader ? raceResult(text, matchLeader, time) : ''}
         </p>
       )}
 
       {isLoading || !storageReady ? (
-        <div className={styles.loadingContainer}>Loading...</div>
+        <div className={styles.loadingContainer}>{text.loading}</div>
       ) : (
         <>
           <Stack spacing={2} sx={{
@@ -480,19 +564,19 @@ export default function GameWrapper() {
           }}>
             {gameState !== 'selectDifficulty' && (
               <Button variant="outlined" onClick={handleNewGame} fullWidth>
-                New Game
+                {text.newGame}
               </Button>
             )}
 
             {activeBoard && (
               <Button variant="outlined" onClick={handleReset} fullWidth>
-                Start from scratch
+                {text.reset}
               </Button>
             )}
 
             {gameState === 'won' && (
               <Button variant="outlined" onClick={() => void handleShare()} disabled={sharing} fullWidth>
-                {sharing ? 'Sending challenge...' : canChallenge(activeBoard) ? 'Challenge a friend' : 'Share result'}
+                {sharing ? text.sending : canChallenge(activeBoard) ? text.challengeFriend : text.shareResult}
               </Button>
             )}
             {shareError && <p className={styles.errorText}>{shareError}</p>}
@@ -503,7 +587,7 @@ export default function GameWrapper() {
                 onClick={() => telegramWebApp()?.addToHomeScreen?.()}
                 fullWidth
               >
-                Add to Home Screen
+                {text.addHome}
               </Button>
             )}
 
@@ -515,14 +599,14 @@ export default function GameWrapper() {
                   onClick={() => handleStartGame(difficulty)}
                   fullWidth
                 >
-                  {difficulty}
+                  {text.difficulties[difficulty]}
                 </Button>
               ))
             )}
 
             {gameState === 'error' && (
               <>
-                <p className={styles.errorText}>Could not load a puzzle.</p>
+                <p className={styles.errorText}>{text.loadFailed}</p>
                 <Button
                   variant="outlined"
                   onClick={() => {
@@ -531,7 +615,7 @@ export default function GameWrapper() {
                   fullWidth
                   disabled={!difficultyState}
                 >
-                  Try again
+                  {text.tryAgain}
                 </Button>
               </>
             )}
@@ -581,15 +665,6 @@ function replaceCell(
   };
 }
 
-function placeLabel(place: number): string {
-  const mod100 = place % 100;
-  const mod10 = place % 10;
-  const suffix = mod100 >= 11 && mod100 <= 13
-    ? 'th'
-    : mod10 === 1 ? 'st' : mod10 === 2 ? 'nd' : mod10 === 3 ? 'rd' : 'th';
-  return `${place}${suffix}`;
-}
-
 function canChallenge(board: LoadedPuzzle | null): boolean {
   return Boolean(telegramWebApp() && board?.level != null);
 }
@@ -607,13 +682,14 @@ function GhostRaceStrip({
   time: number;
   youLeft: number;
 }) {
+  const text = useMessages();
   const theirs = paceAt(samples, time, total);
   const youPercent = pacePercent(total, youLeft);
   const theirPercent = pacePercent(total, theirs.left);
-  const status = youPercent > theirPercent ? 'Ahead' : youPercent < theirPercent ? 'Behind' : 'Level';
+  const status = youPercent > theirPercent ? text.ahead : youPercent < theirPercent ? text.behind : text.level;
   return (
     <div className={styles.race} aria-live="polite">
-      <RaceMeter label="You" left={youLeft} percent={youPercent} />
+      <RaceMeter label={text.you} left={youLeft} percent={youPercent} />
       <RaceMeter label={name} left={theirs.left} percent={theirPercent} />
       <p className={styles.notice}>{status}</p>
     </div>
@@ -621,12 +697,13 @@ function GhostRaceStrip({
 }
 
 function GroupField({ players }: { players: GroupPlayer[] }) {
+  const text = useMessages();
   return (
     <div className={styles.field}>
       {players.map(player => (
         <div className={styles.raceLabel} key={`${player.name}-${player.finished}-${player.left}`}>
           <span>{player.name}</span>
-          <span>{player.left} left · {pacePercent(player.total, player.left)}%</span>
+          <span>{text.left(player.left, pacePercent(player.total, player.left))}</span>
         </div>
       ))}
     </div>
@@ -634,11 +711,12 @@ function GroupField({ players }: { players: GroupPlayer[] }) {
 }
 
 function RaceMeter({ label, left, percent }: { label: string; left: number; percent: number }) {
+  const text = useMessages();
   return (
     <div className={styles.raceMeter}>
       <div className={styles.raceLabel}>
         <span>{label}</span>
-        <span>{left} left · {percent}%</span>
+        <span>{text.left(left, percent)}</span>
       </div>
       <div className={styles.raceTrack}>
         <div className={styles.raceFill} style={{ width: `${percent}%` }} />
@@ -647,11 +725,11 @@ function RaceMeter({ label, left, percent }: { label: string; left: number; perc
   );
 }
 
-function raceResult(opponent: { name: string; seconds: number }, time: number): string {
-  const delta = Math.abs(time - opponent.seconds);
-  if (time < opponent.seconds) return ` Ahead of ${opponent.name} by ${formatTime(delta)}.`;
-  if (time > opponent.seconds) return ` ${opponent.name} was faster by ${formatTime(delta)}.`;
-  return ` Tied with ${opponent.name}.`;
+function raceResult(text: Copy, opponent: { name: string; seconds: number }, time: number): string {
+  const delta = formatTime(Math.abs(time - opponent.seconds));
+  if (time < opponent.seconds) return text.aheadOf(opponent.name, delta);
+  if (time > opponent.seconds) return text.slower(opponent.name, delta);
+  return text.tied(opponent.name);
 }
 
 function formatTime(totalSeconds: number): string {

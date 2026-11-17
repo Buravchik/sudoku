@@ -1,4 +1,7 @@
+'use client';
+
 import { GameSettingsType } from '@/types';
+import { useMessages } from '../Locale';
 import {
   DialogTitle,
   DialogContent,
@@ -15,21 +18,22 @@ interface GameSettingsProps {
   onClose: () => void;
 }
 
-const SETTING_FIELDS: { key: keyof GameSettingsType; label: string }[] = [
-  { key: 'highlightRowAndColumn', label: 'Highlight row and column' },
-  { key: 'highlightSameNumbers', label: 'Highlight the same numbers' },
-  { key: 'highlightSameHints', label: 'Highlight the same pencil marks' },
-  { key: 'highlightCrossForNumbers', label: 'Highlight crosses for the same numbers' },
-  { key: 'highlightCrossForHints', label: 'Highlight crosses for the same pencil marks' },
-  { key: 'hideImpossibleValuesInSelector', label: 'Hide impossible numbers in the selector' },
-  { key: 'hideImpossibleValuesInHints', label: 'Hide impossible pencil marks' },
-  { key: 'highlightCurrentQuadrant', label: 'Highlight the current block' },
-  { key: 'highlightQuadrantsWithSameNumber', label: 'Highlight blocks that contain the same number' },
-  { key: 'highlightAllObviousCells', label: 'Highlight every obvious cell' },
-  { key: 'highlightObviousCellsForCurrentNumber', label: 'Highlight obvious cells for the selected number' },
+const SETTING_KEYS: (keyof GameSettingsType)[] = [
+  'highlightRowAndColumn',
+  'highlightSameNumbers',
+  'highlightSameHints',
+  'highlightCrossForNumbers',
+  'highlightCrossForHints',
+  'hideImpossibleValuesInSelector',
+  'hideImpossibleValuesInHints',
+  'highlightCurrentQuadrant',
+  'highlightQuadrantsWithSameNumber',
+  'highlightAllObviousCells',
+  'highlightObviousCellsForCurrentNumber',
 ];
 
 export default function GameSettings({ settings, onSettingChange, onClose }: GameSettingsProps) {
+  const text = useMessages();
   return (
     <>
       <DialogTitle sx={{
@@ -39,9 +43,9 @@ export default function GameSettings({ settings, onSettingChange, onClose }: Gam
         justifyContent: 'space-between',
         alignItems: 'center',
       }}>
-        Settings
+        {text.settings}
         <IconButton
-          aria-label="close"
+          aria-label={text.close}
           onClick={onClose}
           sx={{
             position: 'absolute',
@@ -55,7 +59,7 @@ export default function GameSettings({ settings, onSettingChange, onClose }: Gam
       </DialogTitle>
       <DialogContent dividers>
         <FormGroup>
-          {SETTING_FIELDS.map(({ key, label }) => (
+          {SETTING_KEYS.map(key => (
             <FormControlLabel
               key={key}
               control={
@@ -64,7 +68,7 @@ export default function GameSettings({ settings, onSettingChange, onClose }: Gam
                   onChange={() => onSettingChange(key)}
                 />
               }
-              label={label}
+              label={text.settingLabels[key]}
             />
           ))}
         </FormGroup>

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import path from 'path';
+import { Lang } from '@/i18n';
 import { GhostRace, readSettingsSnapshot } from '@/sudoku/duel';
 import { sanitizePace } from '@/sudoku/pace';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from '@/sudoku/types';
@@ -13,6 +14,7 @@ export interface StoredDuel extends GhostRace {
   userId: number;
   bestSeconds: number | null;
   createdAt: number;
+  lang?: Lang;
 }
 
 export interface NewDuel {

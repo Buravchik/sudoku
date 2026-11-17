@@ -1,13 +1,16 @@
 import http from 'http';
 import { Telegraf } from 'telegraf';
 import { version } from '../../package.json';
-import { parseDifficultyArg, parseStartParam } from '@/sudoku/daily';
+import { cardLang, Lang, langFrom, messages } from '@/i18n';
+import { difficultyCode, difficultyFromCode, parseDifficultyArg, parseStartParam } from '@/sudoku/daily';
+import { parseMatchId } from '@/sudoku/match';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
-import { playLink, renderCard, formatSeconds } from './cardText';
+import { playLink, renderCard, renderMatch, formatSeconds } from './cardText';
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
 import { acceptDuel, readDuel, recordDuelResult, saveDuel, toGhost } from './duels';
+import { openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -24,15 +27,17 @@ let username = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, '').trim() || ''
 
 bot.start(async (ctx) => {
   if (!ctx.chat) return;
+  const text = messages(langFrom(ctx.from?.language_code));
   if (isGroup(ctx.chat.type)) {
-    await publishCard(ctx.chat.id, SudokuGuruDifficulty.easy);
+    await publishCard(ctx.chat.id, SudokuGuruDifficulty.easy, langFrom(ctx.from?.language_code));
     return;
   }
 
   const replyMarkup = {
-    inline_keyboard: [[
-      { text: 'Play Sudoku', web_app: { url: webAppUrl } },
-    ]],
+    inline_keyboard: [
+      [{ text: text.play, web_app: { url: webAppUrl } }],
+      [{ text: text.dropInChat, switch_inline_query: '' }],
+    ],
   };
 
   try {
@@ -42,7 +47,7 @@ bot.start(async (ctx) => {
       body: JSON.stringify({
         chat_id: ctx.chat.id,
         html: welcomeWidgetHtml(),
-        caption: 'Welcome to Sudoku',
+        caption: text.welcome,
         reply_markup: replyMarkup,
       }),
     });
@@ -52,45 +57,98 @@ bot.start(async (ctx) => {
     }
   } catch (error) {
     console.error('Widget was not sent, falling back to a text message.', error);
-    await ctx.reply('Welcome to Sudoku!', { reply_markup: replyMarkup });
+    await ctx.reply(text.welcome, { reply_markup: replyMarkup });
   }
 });
 
 bot.command('sudoku', async (ctx) => {
+  const text = messages(langFrom(ctx.from?.language_code));
   if (!ctx.chat || !isGroup(ctx.chat.type)) {
-    await ctx.reply('В группе эта команда открывает сегодняшнюю сетку и рекорды чата.');
+    await ctx.reply(text.groupOnly);
     return;
   }
   const difficulty = parseDifficultyArg(commandArgument(ctx.message.text));
   if (!difficulty) {
-    await ctx.reply('Сложность: easy, medium, hard, expert или guru.');
+    await ctx.reply(text.difficultyHint);
     return;
   }
-  await publishCard(ctx.chat.id, difficulty);
+  await publishCard(ctx.chat.id, difficulty, langFrom(ctx.from?.language_code));
 });
 
 bot.command('top', async (ctx) => {
+  const text = messages(langFrom(ctx.from?.language_code));
   if (!ctx.chat || !isGroup(ctx.chat.type)) return;
   const difficulty = parseDifficultyArg(commandArgument(ctx.message.text));
   if (!difficulty) {
-    await ctx.reply('Сложность: easy, medium, hard, expert или guru.');
+    await ctx.reply(text.difficultyHint);
     return;
   }
-  await publishCard(ctx.chat.id, difficulty);
+  await publishCard(ctx.chat.id, difficulty, langFrom(ctx.from?.language_code));
+});
+
+bot.on('inline_query', async (ctx) => {
+  const lang = langFrom(ctx.from.language_code);
+  const text = messages(lang);
+  const results = pickDifficulties(ctx.inlineQuery.query).map(difficulty => ({
+    type: 'article' as const,
+    id: difficulty,
+    title: text.challengeTitle(text.difficulties[difficulty]),
+    description: text.inlineDescription,
+    input_message_content: { message_text: renderMatch(lang, difficulty, []) },
+    reply_markup: {
+      inline_keyboard: [[{
+        text: text.play,
+        callback_data: `n:${difficultyCode(difficulty)}:${lang}`,
+      }]],
+    },
+  }));
+  await ctx.answerInlineQuery(results, { cache_time: 30, is_personal: true });
+});
+
+bot.on('callback_query', async (ctx) => {
+  const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
+  const parsed = parseInlineButton(data);
+  const inlineMessageId = ctx.callbackQuery.inline_message_id;
+  if (!parsed || !inlineMessageId) {
+    await ctx.answerCbQuery();
+    return;
+  }
+  try {
+    const match = await openInlineMatch(inlineMessageId, parsed.difficulty, parsed.lang);
+    const link = await matchLink(match.id);
+    await ctx.answerCbQuery(undefined, { url: link });
+    await editInlineMatch(match, link);
+  } catch (error) {
+    console.error('Failed to open an inline match.', error);
+    await ctx.answerCbQuery().catch(() => undefined);
+  }
 });
 
 async function publishCommands(): Promise<void> {
   if (!username) username = (await bot.telegram.getMe()).username;
+  const english = messages('en');
+  const russian = messages('ru');
   await bot.telegram.setMyCommands(
-    [{ command: 'start', description: 'Play Sudoku' }],
+    [{ command: 'start', description: english.cmdStart }],
     { scope: { type: 'all_private_chats' } },
   );
   await bot.telegram.setMyCommands(
+    [{ command: 'start', description: russian.cmdStart }],
+    { scope: { type: 'all_private_chats' }, language_code: 'ru' },
+  );
+  await bot.telegram.setMyCommands(
     [
-      { command: 'sudoku', description: 'Сегодняшняя сетка и рекорды чата' },
-      { command: 'top', description: 'Рекорды чата за сегодня' },
+      { command: 'sudoku', description: english.cmdSudoku },
+      { command: 'top', description: english.cmdTop },
     ],
     { scope: { type: 'all_group_chats' } },
+  );
+  await bot.telegram.setMyCommands(
+    [
+      { command: 'sudoku', description: russian.cmdSudoku },
+      { command: 'top', description: russian.cmdTop },
+    ],
+    { scope: { type: 'all_group_chats' }, language_code: 'ru' },
   );
 }
 
@@ -121,19 +179,12 @@ function isGroup(type: string): boolean {
   return type === 'group' || type === 'supergroup';
 }
 
-async function publishCard(chatId: number, difficulty: SudokuGuruDifficulty): Promise<void> {
+async function publishCard(chatId: number, difficulty: SudokuGuruDifficulty, lang: Lang): Promise<void> {
   const botUsername = await ensureUsername();
   await withRecords(async (file) => {
-    const card = findTodayCard(file, chatId, difficulty);
+    const card = findTodayCard(file, chatId, difficulty, lang);
     const record = file.chats[String(chatId)]?.records?.[difficulty] ?? null;
-    const extra = {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: 'Играть', url: playLink(botUsername, miniAppShortName, card) },
-        ]],
-      },
-      link_preview_options: { is_disabled: true },
-    };
+    const extra = cardKeyboard(botUsername, card);
     const text = renderCard(card, record);
     if (card.messageId) {
       try {
@@ -184,6 +235,14 @@ function startScoreServer(): http.Server {
     }
     if (req.method === 'GET' && path?.startsWith('/duel/')) {
       await handleDuelRead(path.slice('/duel/'.length), res);
+      return;
+    }
+    if (req.method === 'POST' && path === '/match/state') {
+      await handleMatchState(req, res);
+      return;
+    }
+    if (req.method === 'POST' && path === '/match/result') {
+      await handleMatchResult(req, res);
       return;
     }
     if (req.method === 'POST' && path === '/progress') {
@@ -265,14 +324,7 @@ async function editCard(chatId: number, card: ChallengeCard, record: { name: str
   if (!card.messageId) return;
   const botUsername = await ensureUsername();
   try {
-    await bot.telegram.editMessageText(chatId, card.messageId, undefined, renderCard(card, record), {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: 'Играть', url: playLink(botUsername, miniAppShortName, card) },
-        ]],
-      },
-      link_preview_options: { is_disabled: true },
-    });
+    await bot.telegram.editMessageText(chatId, card.messageId, undefined, renderCard(card, record), cardKeyboard(botUsername, card));
   } catch (error) {
     if (!isNotModified(error)) console.error('Failed to refresh the chat card.', error);
   }
@@ -280,6 +332,109 @@ async function editCard(chatId: number, card: ChallengeCard, record: { name: str
 
 function isNotModified(error: unknown): boolean {
   return error instanceof Error && error.message.includes('message is not modified');
+}
+
+function cardKeyboard(username: string, card: ChallengeCard) {
+  const text = messages(cardLang(card.lang));
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: text.play, url: playLink(username, miniAppShortName, card) }],
+        [{ text: text.dropInChat, switch_inline_query: card.difficulty }],
+      ],
+    },
+    link_preview_options: { is_disabled: true as const },
+  };
+}
+
+function parseInlineButton(data: string): { difficulty: SudokuGuruDifficulty; lang: Lang } | null {
+  const match = /^n:([emhxg]):(en|ru)$/.exec(data);
+  if (!match) return null;
+  const difficulty = difficultyFromCode(match[1]);
+  if (!difficulty || (match[2] !== 'en' && match[2] !== 'ru')) return null;
+  return { difficulty, lang: match[2] };
+}
+
+function pickDifficulties(query: string): SudokuGuruDifficulty[] {
+  const folded = query.trim().toLowerCase().replace(/ё/g, 'е');
+  const all = Object.values(SudokuGuruDifficulty);
+  if (!folded) return all;
+  const picked = all.filter(difficulty => {
+    if (difficulty.startsWith(folded)) return true;
+    return (['en', 'ru'] as const).some(lang => (
+      messages(lang).difficulties[difficulty].toLowerCase().replace(/ё/g, 'е').startsWith(folded)
+    ));
+  });
+  return picked.length > 0 ? picked : all;
+}
+
+async function matchLink(id: string): Promise<string> {
+  const botUsername = await ensureUsername();
+  return `https://t.me/${botUsername}?startapp=i${id}`;
+}
+
+async function editInlineMatch(match: StoredMatch, link: string): Promise<void> {
+  const text = messages(match.lang);
+  await bot.telegram.editMessageText(
+    undefined,
+    undefined,
+    match.inlineMessageId,
+    renderMatch(match.lang, match.difficulty, match.entries),
+    {
+      reply_markup: { inline_keyboard: [[{ text: text.play, url: link }]] },
+      link_preview_options: { is_disabled: true },
+    },
+  ).catch(error => {
+    if (!isNotModified(error)) console.error('Failed to refresh the inline match.', error);
+  });
+}
+
+async function handleMatchState(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await readJson(req) as { initData?: unknown };
+    const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
+    const id = signed ? parseMatchId(signed.startParam) : null;
+    if (!signed || !id) {
+      sendJson(res, 401, { ok: false });
+      return;
+    }
+    const match = await readMatch(id);
+    if (!match) {
+      sendJson(res, 404, { ok: false });
+      return;
+    }
+    const view = toMatchView(match, signed.userId);
+    sendJson(res, 200, { ok: true, difficulty: view.difficulty, level: view.level, leader: view.leader });
+  } catch (error) {
+    console.error('Failed to read an inline match.', error);
+    sendJson(res, 500, { ok: false });
+  }
+}
+
+async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await readJson(req) as { initData?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
+    const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
+    const id = signed ? parseMatchId(signed.startParam) : null;
+    if (!signed || !id) {
+      sendJson(res, 401, { ok: false });
+      return;
+    }
+    const seconds = typeof body.seconds === 'number' ? Math.floor(body.seconds) : -1;
+    const update = await recordMatchResult(id, signed.userId, signed.name, seconds, {
+      total: typeof body.total === 'number' ? body.total : -1,
+      samples: body.samples,
+    });
+    if (!update) {
+      sendJson(res, 400, { ok: false });
+      return;
+    }
+    if (update.improved) await editInlineMatch(update.match, await matchLink(update.match.id));
+    sendJson(res, 200, { ok: true, improved: update.improved });
+  } catch (error) {
+    console.error('Failed to record an inline result.', error);
+    sendJson(res, 500, { ok: false });
+  }
 }
 
 async function handleTelegram(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -333,10 +488,10 @@ async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerRespo
       sendJson(res, 400, { ok: false });
       return;
     }
-    const duel = await saveDuel(accepted);
+    const duel = await saveDuel({ ...accepted, lang: signed.lang });
     const botUsername = await ensureUsername();
     const link = `https://t.me/${botUsername}?startapp=d${duel.id}`;
-    const messageId = await prepareChallengeMessage(signed.userId, duel, link);
+    const messageId = await prepareChallengeMessage(signed.userId, signed.lang, duel, link);
     sendJson(res, 200, { ok: true, id: duel.id, link, messageId });
   } catch (error) {
     console.error('Failed to create a duel.', error);
@@ -378,7 +533,12 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
     await recordDuelResult(id, seconds);
     const beat = seconds < existing.seconds && (previousBest === null || seconds < previousBest);
     if (beat && signed.userId !== existing.userId) {
-      const text = `${signed.name} прошёл твой уровень ${existing.difficulty} за ${formatSeconds(seconds)}. Твоё время — ${formatSeconds(existing.seconds)}.`;
+      const text = messages(cardLang(existing.lang)).beat(
+        signed.name,
+        existing.difficulty,
+        formatSeconds(seconds),
+        formatSeconds(existing.seconds),
+      );
       await bot.telegram.sendMessage(existing.userId, text).catch(error => {
         console.error('Failed to tell the challenger about the result.', error);
       });
@@ -390,11 +550,12 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
   }
 }
 
-async function prepareChallengeMessage(userId: number, duel: { id: string; name: string; difficulty: string; seconds: number }, link: string): Promise<string | null> {
+async function prepareChallengeMessage(userId: number, lang: Lang, duel: { id: string; name: string; difficulty: string; seconds: number }, link: string): Promise<string | null> {
+  const copy = messages(lang);
   const text = [
-    `Судоку · ${duel.difficulty}`,
+    `Sudoku · ${duel.difficulty}`,
     `${duel.name} — ${formatSeconds(duel.seconds)}`,
-    'Тот же уровень и те же настройки. На твоей секунде видно, сколько цифр оставалось у меня.',
+    copy.preparedLine,
   ].join('\n');
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/savePreparedInlineMessage`, {
@@ -408,10 +569,10 @@ async function prepareChallengeMessage(userId: number, duel: { id: string; name:
           type: 'article',
           id: duel.id,
           title: `${duel.name} · ${duel.difficulty} · ${formatSeconds(duel.seconds)}`,
-          description: 'Тот же уровень, настройки и темп',
+          description: copy.preparedDescription,
           input_message_content: { message_text: text },
           reply_markup: {
-            inline_keyboard: [[{ text: 'Играть', url: link }]],
+            inline_keyboard: [[{ text: copy.play, url: link }]],
           },
         },
       }),

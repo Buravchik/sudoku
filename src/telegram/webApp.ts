@@ -52,7 +52,7 @@ export interface TelegramWebApp {
     removeItem: (key: string, callback?: StorageCallback) => void;
   };
   initData?: string;
-  initDataUnsafe?: { start_param?: string };
+  initDataUnsafe?: { start_param?: string; user?: { language_code?: string } };
   onEvent: (event: string, handler: () => void) => void;
   offEvent: (event: string, handler: () => void) => void;
 }
@@ -62,6 +62,23 @@ declare global {
     Telegram?: {
       WebApp?: TelegramWebApp;
     };
+  }
+}
+
+export function telegramLanguage(): string {
+  if (typeof window === 'undefined') return '';
+  const fromApp = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code;
+  if (fromApp) return fromApp;
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const data = new URLSearchParams(hash).get('tgWebAppData');
+  if (!data) return '';
+  try {
+    const user = new URLSearchParams(data).get('user');
+    if (!user) return '';
+    const parsed = JSON.parse(user) as { language_code?: unknown };
+    return typeof parsed.language_code === 'string' ? parsed.language_code : '';
+  } catch {
+    return '';
   }
 }
 

@@ -1,4 +1,7 @@
+'use client';
+
 import { Digit, SudokuCell } from '@/sudoku/types';
+import { useMessages } from '../Locale';
 import { isDigit } from '@/sudoku/cells';
 import { isValueAllowed } from '@/sudoku/rules';
 import { GameSettingsType } from '@/types';
@@ -61,6 +64,7 @@ export default function CellPopup({
   cells,
   settings,
 }: CellPopupProps) {
+  const text = useMessages();
   const handlePencilModeChange = (checked: boolean) => {
     if (checked && selectedValue !== 0) {
       onClear();
@@ -99,7 +103,7 @@ export default function CellPopup({
               onChange={(event) => handlePencilModeChange(event.target.checked)}
             />
           }
-          label="Pencil mode"
+          label={text.pencil}
         />
         <NumberGrid>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((number) => {
@@ -120,7 +124,7 @@ export default function CellPopup({
           })}
         </NumberGrid>
         <Button fullWidth onClick={handleClear}>
-          Clear
+          {text.clear}
         </Button>
       </Box>
     </Dialog>
