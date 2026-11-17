@@ -28,26 +28,6 @@ export default function GameSettings({ settings, onSettingChange, onApply, onClo
           </svg>
         </button>
       </div>
-      <div className={styles.nickname}>
-        <label className={styles.field}>
-          <span>{text.adjective}</span>
-          <select
-            value={picked.adjective}
-            onChange={event => onApply(settingsFromIndexes(Number(event.target.value), picked.noun))}
-          >
-            {words.adjectives.map((word, index) => <option key={word} value={index}>{word}</option>)}
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span>{text.noun}</span>
-          <select
-            value={picked.noun}
-            onChange={event => onApply(settingsFromIndexes(picked.adjective, Number(event.target.value)))}
-          >
-            {words.nouns.map((word, index) => <option key={word} value={index}>{word}</option>)}
-          </select>
-        </label>
-      </div>
       <div className={styles.list}>
         {NICKNAME_BITS.map(key => (
           <label key={key} className={styles.option}>
@@ -61,6 +41,29 @@ export default function GameSettings({ settings, onSettingChange, onApply, onClo
           </label>
         ))}
       </div>
+      <details className={styles.advanced}>
+        <summary className={styles.advancedSummary}>{text.combinationName}</summary>
+        <div className={styles.nickname}>
+          <label className={styles.field}>
+            <span>{text.adjective}</span>
+            <select
+              value={picked.adjective}
+              onChange={event => onApply(settingsFromIndexes(Number(event.target.value), picked.noun))}
+            >
+              {words.adjectives.map((word, index) => <option key={word} value={index}>{word}</option>)}
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>{text.noun}</span>
+            <select
+              value={picked.noun}
+              onChange={event => onApply(settingsFromIndexes(picked.adjective, Number(event.target.value)))}
+            >
+              {words.nouns.map((word, index) => <option key={word} value={index}>{word}</option>)}
+            </select>
+          </label>
+        </div>
+      </details>
     </>
   );
 }
