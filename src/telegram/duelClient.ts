@@ -1,6 +1,7 @@
 import { GhostRace, restoreGhost } from '@/sudoku/duel';
 import { PaceSample, compactPaceForSend } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
+import { GameSettingsType } from '@/types';
 
 export interface CreatedDuel {
   id: string;
@@ -14,6 +15,7 @@ export async function createDuel(input: {
   seconds: number;
   total: number;
   samples: PaceSample[];
+  settings: GameSettingsType;
 }): Promise<CreatedDuel | null> {
   const base = apiBase();
   const initData = window.Telegram?.WebApp?.initData;
@@ -30,6 +32,7 @@ export async function createDuel(input: {
         seconds: input.seconds,
         total: input.total,
         samples: compactPaceForSend(input.samples),
+        settings: input.settings,
       }),
     });
     if (!response.ok) return null;

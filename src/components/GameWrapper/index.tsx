@@ -47,7 +47,7 @@ export default function GameWrapper() {
   const [isLoading, setIsLoading] = useState(false);
   const [time, setTime] = useState(session.elapsedSeconds);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState<GameSettingsType>(loadSettings);
+  const [settings, setSettings] = useState<GameSettingsType>(() => session.ghost?.settings ?? loadSettings());
   const [storageReady, setStorageReady] = useState(() => !hasDeviceStorage());
   const [homeScreen, setHomeScreen] = useState<'unsupported' | 'unknown' | 'added' | 'missed' | null>(null);
   const [challenge, setChallenge] = useState<DailyChallenge | null>(session.challenge);
@@ -104,6 +104,7 @@ export default function GameWrapper() {
         setTime(restored.elapsedSeconds);
         setChallenge(restored.challenge);
         setGhost(restored.ghost);
+        if (restored.ghost) setSettings(restored.ghost.settings);
         paceRef.current = restored.pace;
         previousStateRef.current = restored.gameState;
       }
@@ -204,7 +205,7 @@ export default function GameWrapper() {
   const handleSettingChange = (setting: keyof GameSettingsType) => {
     setSettings(current => {
       const next = { ...current, [setting]: !current[setting] };
-      saveSettings(next);
+      if (!ghostRef.current) saveSettings(next);
       return next;
     });
   };
@@ -216,6 +217,7 @@ export default function GameWrapper() {
     setGhost(null);
     setGroupPlace(null);
     setShareError(null);
+    setSettings(loadSettings());
     setGameState('selectDifficulty');
     setBoard(null);
     setTime(0);
@@ -257,13 +259,14 @@ export default function GameWrapper() {
         seconds: timeRef.current,
         total: cellsToFill(boardNow.cells),
         samples,
+        settings: settingsRef.current,
       });
       setSharing(false);
       if (!created) {
         setShareError('Could not send the challenge.');
         return;
       }
-      const text = `Судоку · ${difficultyState} · ${formatTime(timeRef.current)}. Тот же уровень: на твоей секунде видно, сколько цифр оставалось у меня.`;
+      const text = `Судоку · ${difficultyState} · ${formatTime(timeRef.current)}. Тот же уровень и те же настройки: на твоей секунде видно, сколько цифр оставалось у меня.`;
       if (created.messageId && telegramWebApp()?.shareMessage) {
         await sharePreparedMessage(created.messageId);
         return;
@@ -308,6 +311,7 @@ export default function GameWrapper() {
     paceRef.current = [];
     setChallenge(launch);
     setGhost(null);
+    setSettings(loadSettings());
     setDifficultyState(launch.difficulty);
     setGroupPlace(null);
     setBoard(null);
@@ -342,6 +346,7 @@ export default function GameWrapper() {
       if (!race) throw new Error('The challenge is unavailable');
       const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
       setGhost(race);
+      setSettings(race.settings);
       setDifficultyState(race.difficulty);
       setBoard(puzzle);
       setGameState('playing');
@@ -359,6 +364,7 @@ export default function GameWrapper() {
     paceRef.current = [];
     setChallenge(null);
     setGhost(null);
+    setSettings(loadSettings());
     setGroupPlace(null);
     setDifficultyState(difficulty);
     setBoard(null);

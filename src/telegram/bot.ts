@@ -276,6 +276,7 @@ async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerRespo
       seconds?: unknown;
       total?: unknown;
       samples?: unknown;
+      settings?: unknown;
     };
     const initData = typeof body.initData === 'string' ? body.initData : '';
     const signed = readSignedInitData(initData, token);
@@ -291,6 +292,7 @@ async function handleDuelCreate(req: http.IncomingMessage, res: http.ServerRespo
       seconds: typeof body.seconds === 'number' ? Math.floor(body.seconds) : -1,
       total: typeof body.total === 'number' ? body.total : -1,
       samples: body.samples,
+      settings: body.settings,
     });
     if (!accepted) {
       sendJson(res, 400, { ok: false });
@@ -357,7 +359,7 @@ async function prepareChallengeMessage(userId: number, duel: { id: string; name:
   const text = [
     `Судоку · ${duel.difficulty}`,
     `${duel.name} — ${formatSeconds(duel.seconds)}`,
-    'Тот же уровень. На твоей секунде видно, сколько цифр оставалось у меня.',
+    'Тот же уровень и те же настройки. На твоей секунде видно, сколько цифр оставалось у меня.',
   ].join('\n');
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/savePreparedInlineMessage`, {
@@ -371,7 +373,7 @@ async function prepareChallengeMessage(userId: number, duel: { id: string; name:
           type: 'article',
           id: duel.id,
           title: `${duel.name} · ${duel.difficulty} · ${formatSeconds(duel.seconds)}`,
-          description: 'Тот же уровень и мой темп',
+          description: 'Тот же уровень, настройки и темп',
           input_message_content: { message_text: text },
           reply_markup: {
             inline_keyboard: [[{ text: 'Играть', url: link }]],

@@ -1,5 +1,20 @@
+import { GameSettingsType } from '@/types';
 import { PaceSample, sanitizePace } from './pace';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from './types';
+
+const SETTING_KEYS: (keyof GameSettingsType)[] = [
+  'highlightRowAndColumn',
+  'highlightSameNumbers',
+  'highlightSameHints',
+  'highlightCrossForNumbers',
+  'highlightCrossForHints',
+  'hideImpossibleValuesInSelector',
+  'hideImpossibleValuesInHints',
+  'highlightCurrentQuadrant',
+  'highlightQuadrantsWithSameNumber',
+  'highlightAllObviousCells',
+  'highlightObviousCellsForCurrentNumber',
+];
 
 export interface GhostRace {
   id: string;
@@ -9,6 +24,7 @@ export interface GhostRace {
   seconds: number;
   total: number;
   samples: PaceSample[];
+  settings: GameSettingsType;
 }
 
 export function parseDuelId(value: string | null | undefined): string | null {
@@ -24,7 +40,8 @@ export function restoreGhost(value: unknown): GhostRace | null {
   if (!Number.isInteger(record.level) || record.level! < SUDOKU_GURU_LEVEL_MIN || record.level! > SUDOKU_GURU_LEVEL_MAX) return null;
   if (!Number.isInteger(record.seconds) || record.seconds! < 0 || !Number.isInteger(record.total)) return null;
   const samples = sanitizePace(record.samples, record.total!, record.seconds!);
-  if (!samples) return null;
+  const settings = readSettingsSnapshot(record.settings);
+  if (!samples || !settings) return null;
   return {
     id: record.id!,
     name: record.name.slice(0, 32),
@@ -33,7 +50,19 @@ export function restoreGhost(value: unknown): GhostRace | null {
     seconds: record.seconds!,
     total: record.total!,
     samples,
+    settings,
   };
+}
+
+export function readSettingsSnapshot(value: unknown): GameSettingsType | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const settings = {} as GameSettingsType;
+  for (const key of SETTING_KEYS) {
+    if (typeof record[key] !== 'boolean') return null;
+    settings[key] = record[key];
+  }
+  return settings;
 }
 
 function isDifficulty(value: unknown): value is SudokuGuruDifficulty {

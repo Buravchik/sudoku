@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import path from 'path';
-import { GhostRace } from '@/sudoku/duel';
+import { GhostRace, readSettingsSnapshot } from '@/sudoku/duel';
 import { sanitizePace } from '@/sudoku/pace';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from '@/sudoku/types';
 
@@ -23,6 +23,7 @@ export interface NewDuel {
   seconds: number;
   total: number;
   samples: unknown;
+  settings: unknown;
 }
 
 export function acceptDuel(input: NewDuel): Omit<StoredDuel, 'id' | 'createdAt' | 'bestSeconds'> | null {
@@ -32,7 +33,8 @@ export function acceptDuel(input: NewDuel): Omit<StoredDuel, 'id' | 'createdAt' 
   if (!Number.isInteger(input.seconds) || input.seconds < 1 || input.seconds > MAX_SECONDS) return null;
   if (!Number.isInteger(input.total) || input.total < 1 || input.total > 81) return null;
   const samples = sanitizePace(input.samples, input.total, input.seconds);
-  if (!samples) return null;
+  const settings = readSettingsSnapshot(input.settings);
+  if (!samples || !settings) return null;
   return {
     userId: input.userId,
     name: input.name.slice(0, 32) || 'Игрок',
@@ -41,6 +43,7 @@ export function acceptDuel(input: NewDuel): Omit<StoredDuel, 'id' | 'createdAt' 
     seconds: input.seconds,
     total: input.total,
     samples,
+    settings,
   };
 }
 
@@ -89,6 +92,7 @@ export function toGhost(duel: StoredDuel): GhostRace {
     seconds: duel.seconds,
     total: duel.total,
     samples: duel.samples,
+    settings: duel.settings,
   };
 }
 
