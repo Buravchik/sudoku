@@ -153,6 +153,18 @@ export function setClosingConfirmation(enabled: boolean): void {
   else webApp.disableClosingConfirmation?.();
 }
 
+const BOT_LINK = 'https://t.me/tgsudoku_bot';
+
+export function publicShareUrl(inTelegram: boolean, startParam: string | null, href: string): string {
+  if (inTelegram) {
+    return startParam ? `${BOT_LINK}?startapp=${encodeURIComponent(startParam)}` : BOT_LINK;
+  }
+  const url = new URL(href);
+  url.hash = '';
+  url.search = '';
+  return url.toString();
+}
+
 export function shareInTelegram(text: string, url: string): boolean {
   const webApp = telegramWebApp();
   if (!webApp?.openTelegramLink) return false;

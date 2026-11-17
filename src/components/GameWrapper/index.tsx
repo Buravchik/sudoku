@@ -19,6 +19,7 @@ import {
   hapticSuccess,
   hasDeviceStorage,
   setClosingConfirmation,
+  publicShareUrl,
   readStartParam,
   shareInTelegram,
   telegramWebApp,
@@ -214,7 +215,7 @@ export default function GameWrapper() {
 
   const handleShare = async () => {
     const text = `Solved ${difficultyState || 'a'} sudoku in ${formatTime(time)}.`;
-    const url = window.location.href;
+    const url = publicShareUrl(Boolean(telegramWebApp()), readStartParam(), window.location.href);
     if (shareInTelegram(text, url)) return;
     if (navigator.share) {
       try {
