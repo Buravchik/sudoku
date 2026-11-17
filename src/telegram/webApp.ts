@@ -312,14 +312,6 @@ export function startTelegramApp(): () => void {
   if (!webApp) return () => undefined;
 
   webApp.ready();
-  webApp.expand();
-  if (supportsTelegram('8.0')) {
-    try {
-      webApp.requestFullscreen?.();
-    } catch (error) {
-      console.error('Fullscreen was not available:', error);
-    }
-  }
   applyTelegramChrome();
 
   const onTheme = () => applyTelegramChrome();
