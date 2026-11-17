@@ -135,6 +135,12 @@
   background: var(--cell-selected-ring);
 }
 
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .winBanner {
   color: var(--win);
   font-weight: 600;

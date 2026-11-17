@@ -6,7 +6,7 @@ import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { playLink, renderCard, formatSeconds } from './cardText';
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
-import { ChallengeCard, findTodayCard, recordScore, withRecords } from './records';
+import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
 import { acceptDuel, readDuel, recordDuelResult, saveDuel, toGhost } from './duels';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
@@ -186,6 +186,10 @@ function startScoreServer(): http.Server {
       await handleDuelRead(path.slice('/duel/'.length), res);
       return;
     }
+    if (req.method === 'POST' && path === '/progress') {
+      await handleProgress(req, res);
+      return;
+    }
     if (req.method !== 'POST' || path !== '/score') {
       res.writeHead(404);
       res.end();
@@ -193,7 +197,7 @@ function startScoreServer(): http.Server {
     }
 
     try {
-      const body = await readJson(req) as { initData?: unknown; seconds?: unknown };
+      const body = await readJson(req) as { initData?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
       const initData = typeof body.initData === 'string' ? body.initData : '';
       const seconds = body.seconds;
       const signed = readSignedInitData(initData, token);
@@ -207,7 +211,14 @@ function startScoreServer(): http.Server {
         return;
       }
 
-      const update = await withRecords(file => recordScore(file, challenge, signed.userId, signed.name, Math.floor(seconds)));
+      const update = await withRecords(file => recordScore(
+        file,
+        challenge,
+        signed.userId,
+        signed.name,
+        Math.floor(seconds),
+        { total: typeof body.total === 'number' ? body.total : -1, samples: body.samples },
+      ));
       if (!update.ok) {
         sendJson(res, 400, { ok: false });
         return;
@@ -224,6 +235,30 @@ function startScoreServer(): http.Server {
     console.log(`Score endpoint listening on :${scorePort}/score`);
   });
   return server;
+}
+
+async function handleProgress(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await readJson(req) as { initData?: unknown; left?: unknown; total?: unknown };
+    const initData = typeof body.initData === 'string' ? body.initData : '';
+    const signed = readSignedInitData(initData, token);
+    const challenge = signed ? parseStartParam(signed.startParam) : null;
+    if (!signed || !challenge || (signed.chatType !== 'group' && signed.chatType !== 'supergroup')) {
+      sendJson(res, 401, { ok: false });
+      return;
+    }
+    const left = typeof body.left === 'number' ? body.left : -1;
+    const total = typeof body.total === 'number' ? body.total : -1;
+    const view = await withRecords(file => touchProgress(file, challenge, signed.userId, signed.name, left, total));
+    if (!view) {
+      sendJson(res, 400, { ok: false });
+      return;
+    }
+    sendJson(res, 200, { ok: true, leader: view.leader, players: view.players });
+  } catch (error) {
+    console.error('Failed to update the live race.', error);
+    sendJson(res, 500, { ok: false });
+  }
 }
 
 async function editCard(chatId: number, card: ChallengeCard, record: { name: string; seconds: number; day: string } | null): Promise<void> {

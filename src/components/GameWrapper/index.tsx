@@ -28,7 +28,7 @@ import {
   sharePreparedMessage,
   telegramWebApp,
 } from '@/telegram/webApp';
-import { submitGroupScore } from '@/telegram/submitScore';
+import { GroupLeader, GroupPlayer, submitGroupScore, syncGroupRace } from '@/telegram/submitScore';
 import { GameSettingsType } from '@/types';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { Dialog } from '@mui/material';
@@ -54,6 +54,8 @@ export default function GameWrapper() {
   const [ghost, setGhost] = useState<GhostRace | null>(session.ghost);
   const [groupPlace, setGroupPlace] = useState<number | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
+  const [groupLeader, setGroupLeader] = useState<GroupLeader | null>(null);
+  const [groupPlayers, setGroupPlayers] = useState<GroupPlayer[]>([]);
   const [sharing, setSharing] = useState(false);
 
   const timeRef = useRef(time);
@@ -150,8 +152,11 @@ export default function GameWrapper() {
   useEffect(() => {
     if (previousStateRef.current === 'playing' && gameState === 'won') {
       hapticSuccess();
-      if (challengeRef.current && boardRef.current?.source === 'online') {
-        void submitGroupScore(timeRef.current).then(result => {
+      const finishedBoard = boardRef.current;
+      if (challengeRef.current && finishedBoard?.source === 'online') {
+        const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(finishedBoard.cells));
+        paceRef.current = samples;
+        void submitGroupScore(timeRef.current, samples, cellsToFill(finishedBoard.cells)).then(result => {
           if (result?.improved) setGroupPlace(result.place);
         });
       }
@@ -182,6 +187,25 @@ export default function GameWrapper() {
     }, 1000);
     return () => window.clearInterval(id);
   }, [gameState, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || gameState !== 'playing' || !challenge) return;
+    let cancelled = false;
+    const send = async () => {
+      const current = boardRef.current;
+      if (!current) return;
+      const race = await syncGroupRace(cellsLeft(current.cells), cellsToFill(current.cells));
+      if (cancelled || !race) return;
+      setGroupLeader(race.leader);
+      setGroupPlayers(race.players);
+    };
+    void send();
+    const id = window.setInterval(() => void send(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [gameState, storageReady, challenge]);
 
   useEffect(() => {
     if (gameState !== 'playing') return;
@@ -216,6 +240,8 @@ export default function GameWrapper() {
     setChallenge(null);
     setGhost(null);
     setGroupPlace(null);
+    setGroupLeader(null);
+    setGroupPlayers([]);
     setShareError(null);
     setSettings(loadSettings());
     setGameState('selectDifficulty');
@@ -310,6 +336,8 @@ export default function GameWrapper() {
     paceRef.current = [];
     setChallenge(launch);
     setGhost(null);
+    setGroupLeader(null);
+    setGroupPlayers([]);
     setSettings(loadSettings());
     setDifficultyState(launch.difficulty);
     setGroupPlace(null);
@@ -335,6 +363,8 @@ export default function GameWrapper() {
     paceRef.current = [];
     setChallenge(null);
     setGhost(null);
+    setGroupLeader(null);
+    setGroupPlayers([]);
     setGroupPlace(null);
     setBoard(null);
     setGameState('notStarted');
@@ -363,6 +393,8 @@ export default function GameWrapper() {
     paceRef.current = [];
     setChallenge(null);
     setGhost(null);
+    setGroupLeader(null);
+    setGroupPlayers([]);
     setSettings(loadSettings());
     setGroupPlace(null);
     setDifficultyState(difficulty);
@@ -385,6 +417,7 @@ export default function GameWrapper() {
   };
 
   const activeBoard = gameState === 'playing' || gameState === 'won' ? board : null;
+  const paceOpponent = ghost ?? (gameState === 'playing' ? groupLeader : null);
 
   return (
     <div className={`${styles.gameWrapper} game-shell`}>
@@ -409,8 +442,17 @@ export default function GameWrapper() {
       {challenge && activeBoard && (
         <p className={styles.notice}>Chat puzzle, {challenge.difficulty}.</p>
       )}
-      {ghost && activeBoard && (
-        <GhostRaceStrip ghost={ghost} time={time} youLeft={cellsLeft(activeBoard.cells)} />
+      {paceOpponent && activeBoard && (
+        <GhostRaceStrip
+          name={paceOpponent.name}
+          samples={paceOpponent.samples}
+          total={paceOpponent.total}
+          time={time}
+          youLeft={cellsLeft(activeBoard.cells)}
+        />
+      )}
+      {challenge && groupPlayers.length > 0 && activeBoard && (
+        <GroupField players={groupPlayers} />
       )}
       {activeBoard?.source === 'offline' && (
         <p className={styles.notice}>Online puzzles are unavailable. This round uses an offline puzzle.</p>
@@ -420,6 +462,7 @@ export default function GameWrapper() {
           Solved in {formatTime(time)}.
           {groupPlace ? ` ${placeLabel(groupPlace)} in the chat today.` : ''}
           {ghost ? raceResult(ghost, time) : ''}
+          {!ghost && groupLeader ? raceResult(groupLeader, time) : ''}
         </p>
       )}
 
@@ -551,12 +594,41 @@ function canChallenge(board: LoadedPuzzle | null): boolean {
   return Boolean(telegramWebApp() && board?.level != null);
 }
 
-function GhostRaceStrip({ ghost, time, youLeft }: { ghost: GhostRace; time: number; youLeft: number }) {
-  const theirs = paceAt(ghost.samples, time, ghost.total);
+function GhostRaceStrip({
+  name,
+  samples,
+  total,
+  time,
+  youLeft,
+}: {
+  name: string;
+  samples: PaceSample[];
+  total: number;
+  time: number;
+  youLeft: number;
+}) {
+  const theirs = paceAt(samples, time, total);
+  const youPercent = pacePercent(total, youLeft);
+  const theirPercent = pacePercent(total, theirs.left);
+  const status = youPercent > theirPercent ? 'Ahead' : youPercent < theirPercent ? 'Behind' : 'Level';
   return (
     <div className={styles.race} aria-live="polite">
-      <RaceMeter label="You" left={youLeft} percent={pacePercent(ghost.total, youLeft)} />
-      <RaceMeter label={ghost.name} left={theirs.left} percent={pacePercent(ghost.total, theirs.left)} />
+      <RaceMeter label="You" left={youLeft} percent={youPercent} />
+      <RaceMeter label={name} left={theirs.left} percent={theirPercent} />
+      <p className={styles.notice}>{status}</p>
+    </div>
+  );
+}
+
+function GroupField({ players }: { players: GroupPlayer[] }) {
+  return (
+    <div className={styles.field}>
+      {players.map(player => (
+        <div className={styles.raceLabel} key={`${player.name}-${player.finished}-${player.left}`}>
+          <span>{player.name}</span>
+          <span>{player.left} left · {pacePercent(player.total, player.left)}%</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -575,11 +647,11 @@ function RaceMeter({ label, left, percent }: { label: string; left: number; perc
   );
 }
 
-function raceResult(ghost: GhostRace, time: number): string {
-  const delta = Math.abs(time - ghost.seconds);
-  if (time < ghost.seconds) return ` Ahead of ${ghost.name} by ${formatTime(delta)}.`;
-  if (time > ghost.seconds) return ` ${ghost.name} was faster by ${formatTime(delta)}.`;
-  return ` Tied with ${ghost.name}.`;
+function raceResult(opponent: { name: string; seconds: number }, time: number): string {
+  const delta = Math.abs(time - opponent.seconds);
+  if (time < opponent.seconds) return ` Ahead of ${opponent.name} by ${formatTime(delta)}.`;
+  if (time > opponent.seconds) return ` ${opponent.name} was faster by ${formatTime(delta)}.`;
+  return ` Tied with ${opponent.name}.`;
 }
 
 function formatTime(totalSeconds: number): string {

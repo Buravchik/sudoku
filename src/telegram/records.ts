@@ -2,7 +2,10 @@ import { mkdir, readFile, rename, writeFile } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import path from 'path';
 import { DailyChallenge, todayKey } from '@/sudoku/daily';
+import { PaceSample, pacePercent, sanitizePace } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
+
+const LIVE_STALE_MS = 90_000;
 
 const MIN_SECONDS = 15;
 const MAX_SECONDS = 24 * 60 * 60;
@@ -20,12 +23,43 @@ export interface ChatRecord {
   day: string;
 }
 
+export interface LeaderPace {
+  userId: number;
+  name: string;
+  seconds: number;
+  total: number;
+  samples: PaceSample[];
+}
+
+export interface LivePlayer {
+  userId: number;
+  name: string;
+  left: number;
+  total: number;
+  updatedAt: number;
+  finished: boolean;
+}
+
+export interface RacePlayer {
+  name: string;
+  left: number;
+  total: number;
+  finished: boolean;
+}
+
+export interface RaceView {
+  leader: { name: string; seconds: number; total: number; samples: PaceSample[] } | null;
+  players: RacePlayer[];
+}
+
 export interface ChallengeCard {
   id: string;
   day: string;
   difficulty: SudokuGuruDifficulty;
   messageId: number;
   entries: ScoreEntry[];
+  leader?: LeaderPace;
+  live?: LivePlayer[];
 }
 
 interface ChatState {
@@ -69,7 +103,14 @@ export function findTodayCard(file: RecordFile, chatId: number, difficulty: Sudo
   return card;
 }
 
-export function recordScore(file: RecordFile, challenge: DailyChallenge, userId: number, name: string, seconds: number): ScoreUpdate {
+export function recordScore(
+  file: RecordFile,
+  challenge: DailyChallenge,
+  userId: number,
+  name: string,
+  seconds: number,
+  pace?: { total: number; samples: unknown },
+): ScoreUpdate {
   if (!Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) {
     return { ok: false, reason: 'time' };
   }
@@ -88,13 +129,26 @@ export function recordScore(file: RecordFile, challenge: DailyChallenge, userId:
     current.name = name;
   }
   card.entries.sort((left, right) => left.seconds - right.seconds || left.userId - right.userId);
+  const place = card.entries.findIndex(entry => entry.userId === userId) + 1;
+  if (place === 1 && improved) {
+    const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
+    card.leader = samples && pace
+      ? { userId, name, seconds, total: pace.total, samples }
+      : undefined;
+  }
+  const playing = card.live?.find(player => player.userId === userId);
+  if (playing) {
+    playing.finished = true;
+    playing.left = 0;
+    playing.name = name;
+    playing.updatedAt = Date.now();
+  }
 
   const record = chat.records[card.difficulty] ?? null;
   if (improved && (!record || seconds < record.seconds)) {
     chat.records[card.difficulty] = { name, seconds, day: card.day };
   }
 
-  const place = card.entries.findIndex(entry => entry.userId === userId) + 1;
   return {
     ok: true,
     place,
@@ -102,6 +156,53 @@ export function recordScore(file: RecordFile, challenge: DailyChallenge, userId:
     chatId: located.chatId,
     card,
     record: chat.records[card.difficulty] ?? null,
+  };
+}
+
+export function touchProgress(
+  file: RecordFile,
+  challenge: DailyChallenge,
+  userId: number,
+  name: string,
+  left: number,
+  total: number,
+): RaceView | null {
+  if (!Number.isInteger(left) || !Number.isInteger(total) || total < 1 || total > 81 || left < 0 || left > total) {
+    return null;
+  }
+  const located = locateCard(file, challenge.cardId);
+  if (!located) return null;
+  const { card } = located;
+  if (card.day !== challenge.day || card.difficulty !== challenge.difficulty) return null;
+
+  const now = Date.now();
+  card.live ??= [];
+  const existing = card.live.find(item => item.userId === userId);
+  if (existing?.finished) {
+    existing.name = name;
+    existing.updatedAt = now;
+  } else {
+    const player: LivePlayer = { userId, name, left, total, updatedAt: now, finished: false };
+    if (existing) Object.assign(existing, player);
+    else card.live.push(player);
+  }
+  card.live = card.live
+    .filter(item => item.finished || now - item.updatedAt <= LIVE_STALE_MS)
+    .slice(-40);
+
+  const leader = card.leader && card.leader.userId !== userId ? card.leader : undefined;
+  const players = card.live
+    .filter(item => item.userId !== userId)
+    .map(item => ({ name: item.name, left: item.left, total: item.total, finished: item.finished }))
+    .sort((leftPlayer, rightPlayer) => (
+      pacePercent(rightPlayer.total, rightPlayer.left) - pacePercent(leftPlayer.total, leftPlayer.left)
+      || leftPlayer.name.localeCompare(rightPlayer.name)
+    ));
+  return {
+    leader: leader
+      ? { name: leader.name, seconds: leader.seconds, total: leader.total, samples: leader.samples }
+      : null,
+    players,
   };
 }
 
