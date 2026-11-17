@@ -86,7 +86,8 @@ export function readStartParam(): string | null {
   if (typeof window === 'undefined') return null;
   const fromApp = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
   if (fromApp) return fromApp;
-  return new URLSearchParams(window.location.search).get('tgWebAppStartParam');
+  const search = new URLSearchParams(window.location.search);
+  return search.get('tgWebAppStartParam') ?? search.get('match');
 }
 
 export function telegramWebApp(): TelegramWebApp | null {

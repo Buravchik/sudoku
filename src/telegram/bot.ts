@@ -10,7 +10,7 @@ import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
 import { acceptDuel, readDuel, recordDuelResult, saveDuel, toGhost } from './duels';
-import { attachInlineMessage, createInlineMatch, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
+import { attachInlineMessage, noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -19,6 +19,7 @@ if (!token) {
 
 const bot = new Telegraf(token);
 const webAppUrl = process.env.TELEGRAM_WEBAPP_URL || `https://buravchik.github.io/sudoku/?v=${version}`;
+const publicOrigin = 'https://sudoku-bot-294383977898.europe-west1.run.app';
 const webhookMode = process.env.RECORDS_BACKEND === 'firestore';
 const miniAppShortName = process.env.TELEGRAM_MINI_APP_SHORT_NAME?.trim() || undefined;
 const scorePort = Number(process.env.PORT || 8080);
@@ -28,6 +29,16 @@ let username = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, '').trim() || ''
 bot.start(async (ctx) => {
   if (!ctx.chat) return;
   const text = messages(langFrom(ctx.from?.language_code));
+  const openedMatch = parseMatchId(ctx.startPayload ?? '');
+  if (openedMatch && !isGroup(ctx.chat.type)) {
+    const match = await readMatch(openedMatch);
+    const url = new URL(webAppUrl);
+    url.searchParams.set('match', `i${openedMatch}`);
+    await ctx.reply(match ? text.challengeTitle(text.difficulties[match.difficulty]) : text.welcome, {
+      reply_markup: { inline_keyboard: [[{ text: text.play, web_app: { url: url.toString() } }]] },
+    });
+    return;
+  }
   if (isGroup(ctx.chat.type)) {
     await publishCard(ctx.chat.id, SudokuGuruDifficulty.easy, langFrom(ctx.from?.language_code));
     return;
@@ -89,42 +100,20 @@ bot.command('top', async (ctx) => {
 bot.on('inline_query', async (ctx) => {
   const lang = langFrom(ctx.from.language_code);
   const text = messages(lang);
-  try {
-    const botUsername = await ensureUsername();
-    const matches = await Promise.all(
-      pickDifficulties(ctx.inlineQuery.query).map(difficulty => createInlineMatch(difficulty, lang)),
-    );
-    const results = matches.map(match => ({
-      type: 'article' as const,
-      id: match.id,
-      title: text.challengeTitle(text.difficulties[match.difficulty]),
-      description: text.inlineDescription,
-      input_message_content: { message_text: renderMatch(lang, match.difficulty, []) },
-      reply_markup: {
-        inline_keyboard: [[{
-          text: text.play,
-          url: `https://t.me/${botUsername}?startapp=i${match.id}`,
-        }]],
-      },
-    }));
-    await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
-  } catch (error) {
-    console.error('Failed to answer an inline query.', error);
-    const results = pickDifficulties(ctx.inlineQuery.query).map(difficulty => ({
-      type: 'article' as const,
-      id: difficulty,
-      title: text.challengeTitle(text.difficulties[difficulty]),
-      description: text.inlineDescription,
-      input_message_content: { message_text: renderMatch(lang, difficulty, []) },
-      reply_markup: {
-        inline_keyboard: [[{
-          text: text.play,
-          callback_data: `n:${difficultyCode(difficulty)}:${lang}`,
-        }]],
-      },
-    }));
-    await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true }).catch(() => undefined);
-  }
+  const results = pickDifficulties(ctx.inlineQuery.query).map(difficulty => ({
+    type: 'article' as const,
+    id: difficulty,
+    title: text.challengeTitle(text.difficulties[difficulty]),
+    description: text.inlineDescription,
+    input_message_content: { message_text: renderMatch(lang, difficulty, []) },
+    reply_markup: {
+      inline_keyboard: [[{
+        text: text.play,
+        callback_data: `n:${difficultyCode(difficulty)}:${lang}`,
+      }]],
+    },
+  }));
+  await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
 });
 
 bot.on('chosen_inline_result', async (ctx) => {
@@ -141,9 +130,17 @@ bot.on('callback_query', async (ctx) => {
   }
   try {
     const match = await openInlineMatch(inlineMessageId, parsed.difficulty, parsed.lang);
-    const link = await matchLink(match.id);
-    await editInlineMatch(match, link);
-    await ctx.answerCbQuery();
+    const noted = await noteMatchPlayer(match.id, ctx.from.id, displayName(ctx.from, parsed.lang));
+    const current = noted?.match ?? match;
+    const page = playPageUrl(current.id);
+    await editInlineMatch(current, page);
+    try {
+      await ctx.answerCbQuery(undefined, { url: page });
+    } catch (error) {
+      if (!isUrlInvalid(error)) throw error;
+      const botUsername = await ensureUsername();
+      await ctx.answerCbQuery(undefined, { url: `https://t.me/${botUsername}?start=i${current.id}` });
+    }
   } catch (error) {
     console.error('Failed to open an inline match.', error);
     await ctx.answerCbQuery().catch(() => undefined);
@@ -242,6 +239,10 @@ function startScoreServer(): http.Server {
       return;
     }
     const path = req.url?.split('?')[0];
+    if (req.method === 'GET' && path?.startsWith('/play/i')) {
+      await handlePlayOpen(path.slice('/play/i'.length), res);
+      return;
+    }
     if (req.method === 'GET' && (path === '/' || path === '/health')) {
       res.writeHead(200);
       res.end('ok');
@@ -402,9 +403,36 @@ function pickDifficulties(query: string): SudokuGuruDifficulty[] {
   return picked.length > 0 ? picked : all;
 }
 
-async function matchLink(id: string): Promise<string> {
+function playPageUrl(id: string): string {
+  return `${publicOrigin}/play/i${id}`;
+}
+
+function matchIdFrom(startParam: string | undefined, bodyId: unknown): string | null {
+  const fromStart = startParam ? parseMatchId(startParam) : null;
+  if (fromStart) return fromStart;
+  return typeof bodyId === 'string' ? parseMatchId(bodyId) : null;
+}
+
+function displayName(from: { first_name?: string; last_name?: string } | undefined, lang: Lang): string {
+  const name = [from?.first_name, from?.last_name].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 32);
+  return name || (lang === 'ru' ? 'Игрок' : 'Player');
+}
+
+function isUrlInvalid(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('URL_INVALID');
+}
+
+async function handlePlayOpen(id: string, res: http.ServerResponse): Promise<void> {
+  if (!/^[a-f0-9]{16}$/.test(id)) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
   const botUsername = await ensureUsername();
-  return `https://t.me/${botUsername}?startapp=i${id}`;
+  const target = `https://t.me/${botUsername}?startapp=i${id}`;
+  const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${target}"><title>Sudoku</title><script>location.replace(${JSON.stringify(target)})</script><p><a href="${target}">Play</a></p>`;
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(html);
 }
 
 async function editInlineMatch(match: StoredMatch, link: string): Promise<void> {
@@ -414,7 +442,7 @@ async function editInlineMatch(match: StoredMatch, link: string): Promise<void> 
     undefined,
     undefined,
     match.inlineMessageId,
-    renderMatch(match.lang, match.difficulty, match.entries),
+    renderMatch(match.lang, match.difficulty, match.entries, match.present ?? []),
     {
       reply_markup: { inline_keyboard: [[{ text: text.play, url: link }]] },
       link_preview_options: { is_disabled: true },
@@ -426,14 +454,16 @@ async function editInlineMatch(match: StoredMatch, link: string): Promise<void> 
 
 async function handleMatchState(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown };
+    const body = await readJson(req) as { initData?: unknown; matchId?: unknown };
     const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
-    const id = signed ? parseMatchId(signed.startParam) : null;
+    const id = matchIdFrom(signed?.startParam, body.matchId);
     if (!signed || !id) {
       sendJson(res, 401, { ok: false });
       return;
     }
-    const match = await readMatch(id);
+    const noted = await noteMatchPlayer(id, signed.userId, signed.name);
+    if (noted?.added) await editInlineMatch(noted.match, playPageUrl(id));
+    const match = noted?.match ?? await readMatch(id);
     if (!match) {
       sendJson(res, 404, { ok: false });
       return;
@@ -448,9 +478,9 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
 
 async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
+    const body = await readJson(req) as { initData?: unknown; matchId?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
     const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
-    const id = signed ? parseMatchId(signed.startParam) : null;
+    const id = matchIdFrom(signed?.startParam, body.matchId);
     if (!signed || !id) {
       sendJson(res, 401, { ok: false });
       return;
@@ -464,7 +494,7 @@ async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResp
       sendJson(res, 400, { ok: false });
       return;
     }
-    if (update.improved) await editInlineMatch(update.match, await matchLink(update.match.id));
+    if (update) await editInlineMatch(update.match, playPageUrl(update.match.id));
     sendJson(res, 200, { ok: true, improved: update.improved });
   } catch (error) {
     console.error('Failed to record an inline result.', error);

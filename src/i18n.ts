@@ -51,6 +51,7 @@ export interface Copy {
   play: string;
   dropInChat: string;
   nobody: string;
+  playing: string;
   more: (n: number) => string;
   chatRecord: (time: string, name: string, day: string) => string;
   welcome: string;
@@ -125,6 +126,7 @@ const copy: Record<Lang, Copy> = {
     play: 'Play',
     dropInChat: 'Drop in a chat',
     nobody: 'No one has finished yet.',
+    playing: 'Playing',
     more: n => `${n} more`,
     chatRecord: (time, name, day) => `Chat record: ${time} · ${name} · ${day}`,
     welcome: 'Welcome to Sudoku',
@@ -197,6 +199,7 @@ const copy: Record<Lang, Copy> = {
     play: 'Играть',
     dropInChat: 'В другой чат',
     nobody: 'Пока никто не решил.',
+    playing: 'Играют',
     more: n => `Ещё ${n}`,
     chatRecord: (time, name, day) => `Рекорд чата: ${time} · ${name} · ${day}`,
     welcome: 'Судоку',

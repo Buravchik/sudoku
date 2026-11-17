@@ -1,5 +1,6 @@
 import { compactPaceForSend, PaceSample } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
+import { readStartParam } from './webApp';
 
 export interface MatchLeader {
   name: string;
@@ -27,7 +28,7 @@ export async function fetchMatchState(): Promise<MatchState | null> {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData }),
+      body: JSON.stringify({ initData, matchId: readStartParam() }),
     });
     if (!response.ok) return null;
     const payload = await response.json() as { ok?: boolean; difficulty?: SudokuGuruDifficulty; level?: number; leader?: MatchLeader | null };
@@ -47,7 +48,7 @@ export async function reportMatchResult(seconds: number, samples: PaceSample[], 
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, seconds, total, samples: compactPaceForSend(samples) }),
+      body: JSON.stringify({ initData, matchId: readStartParam(), seconds, total, samples: compactPaceForSend(samples) }),
     });
   } catch (error) {
     console.error('Failed to record the shared result.', error);

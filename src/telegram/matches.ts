@@ -24,6 +24,12 @@ export interface MatchLeader {
   samples: PaceSample[];
 }
 
+export interface MatchPresence {
+  userId: number;
+  name: string;
+  startedAt: number;
+}
+
 export interface StoredMatch {
   id: string;
   difficulty: SudokuGuruDifficulty;
@@ -32,6 +38,7 @@ export interface StoredMatch {
   inlineMessageId: string;
   createdAt: number;
   entries: MatchEntry[];
+  present?: MatchPresence[];
   leader?: MatchLeader;
 }
 
@@ -134,7 +141,15 @@ function newMatch(inlineMessageId: string, difficulty: SudokuGuruDifficulty, lan
     inlineMessageId,
     createdAt: Date.now(),
     entries: [],
+    present: [],
   };
+}
+
+export async function noteMatchPlayer(id: string, userId: number, name: string): Promise<{ match: StoredMatch; added: boolean } | null> {
+  const clean = name.replace(/\s+/g, ' ').trim().slice(0, 32);
+  if (!/^[a-f0-9]{16}$/.test(id) || !clean) return null;
+  if (process.env.RECORDS_BACKEND === 'firestore') return noteFirestore(id, userId, clean);
+  return withFile(file => addPlayer(file.matches[id], userId, clean));
 }
 
 function applyResult(
@@ -153,6 +168,7 @@ function applyResult(
     current.name = name;
   }
   match.entries.sort((left, right) => left.seconds - right.seconds || left.userId - right.userId);
+  match.present = (match.present ?? []).filter(player => player.userId !== userId);
   if (match.entries[0]?.userId === userId && improved) {
     const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
     if (samples && pace) match.leader = { userId, name, seconds, total: pace.total, samples };
@@ -227,6 +243,30 @@ async function openFirestore(inlineMessageId: string, difficulty: SudokuGuruDiff
     transaction.set(lock, { matchId: created.id });
     transaction.set(db.doc(`matches/${created.id}`), created);
     return created;
+  });
+}
+
+function addPlayer(match: StoredMatch | undefined, userId: number, name: string): { match: StoredMatch; added: boolean } | null {
+  if (!match || !fresh(match)) return null;
+  const present = match.present ?? [];
+  if (present.some(player => player.userId === userId)) {
+    match.present = present;
+    return { match, added: false };
+  }
+  match.present = [...present, { userId, name, startedAt: Date.now() }];
+  return { match, added: true };
+}
+
+async function noteFirestore(id: string, userId: number, name: string): Promise<{ match: StoredMatch; added: boolean } | null> {
+  const { Firestore } = await import('@google-cloud/firestore');
+  const ref = new Firestore().doc(`matches/${id}`);
+  return ref.firestore.runTransaction(async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) return null;
+    const next = addPlayer(snapshot.data() as StoredMatch, userId, name);
+    if (!next) return null;
+    transaction.set(ref, next.match);
+    return next;
   });
 }
 

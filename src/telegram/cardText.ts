@@ -26,9 +26,15 @@ export function renderMatch(
   lang: ReturnType<typeof cardLang>,
   difficulty: SudokuGuruDifficulty,
   entries: { name: string; seconds: number }[],
+  playing: { name: string }[] = [],
 ): string {
   const text = messages(lang);
   const lines = [`Sudoku · ${text.difficulties[difficulty]}`, ''];
+  if (playing.length > 0) {
+    lines.push(text.playing);
+    playing.slice(0, 10).forEach(player => lines.push(`• ${player.name}`));
+    lines.push('');
+  }
   if (entries.length === 0) lines.push(text.nobody);
   else {
     entries.slice(0, 10).forEach((entry, index) => {
