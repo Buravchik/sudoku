@@ -120,6 +120,18 @@
   width: 100%;
 }
 
+.playRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.playRow > .pillPrimary {
+  flex: 1;
+  min-width: 0;
+}
+
 .pill {
   height: 48px;
   border: 0;
@@ -139,6 +151,14 @@
 .pill:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.pill.iconPill {
+  flex: 0 0 48px;
+  width: 48px;
+  padding: 0;
+  display: grid;
+  place-items: center;
 }
 
 .pillPrimary {
