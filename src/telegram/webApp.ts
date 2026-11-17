@@ -292,16 +292,19 @@ export function applyTelegramChrome(): void {
   applySafeArea();
 }
 
+function insetEdge(value: SafeAreaInset | undefined, edge: keyof SafeAreaInset): number {
+  const amount = value?.[edge];
+  return typeof amount === 'number' && Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
 export function applySafeArea(): void {
   const webApp = telegramWebApp();
   if (!webApp) return;
-  const inset = webApp.contentSafeAreaInset ?? webApp.safeAreaInset;
-  if (!inset) return;
   const root = document.documentElement;
-  root.style.setProperty('--tg-safe-top', `${inset.top}px`);
-  root.style.setProperty('--tg-safe-right', `${inset.right}px`);
-  root.style.setProperty('--tg-safe-bottom', `${inset.bottom}px`);
-  root.style.setProperty('--tg-safe-left', `${inset.left}px`);
+  for (const edge of ['top', 'bottom', 'left', 'right'] as const) {
+    const total = insetEdge(webApp.safeAreaInset, edge) + insetEdge(webApp.contentSafeAreaInset, edge);
+    root.style.setProperty(`--tg-safe-${edge}`, `${total}px`);
+  }
 }
 
 export function startTelegramApp(): () => void {
@@ -324,12 +327,14 @@ export function startTelegramApp(): () => void {
   webApp.onEvent('themeChanged', onTheme);
   webApp.onEvent('safeAreaChanged', onSafeArea);
   webApp.onEvent('contentSafeAreaChanged', onSafeArea);
+  webApp.onEvent('fullscreenChanged', onSafeArea);
   webApp.onEvent('viewportChanged', onSafeArea);
 
   return () => {
     webApp.offEvent('themeChanged', onTheme);
     webApp.offEvent('safeAreaChanged', onSafeArea);
     webApp.offEvent('contentSafeAreaChanged', onSafeArea);
+    webApp.offEvent('fullscreenChanged', onSafeArea);
     webApp.offEvent('viewportChanged', onSafeArea);
   };
 }
