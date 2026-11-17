@@ -1,26 +1,29 @@
-import { Digits, Cell } from '@/SudokuGame';
+import { Digit, SudokuCell } from '@/sudoku/types';
+import { isDigit } from '@/sudoku/cells';
+import { isValueAllowed } from '@/sudoku/rules';
 import { GameSettingsType } from '@/types';
-import { 
-  Box, 
-  Dialog, 
-  ToggleButton, 
+import {
+  Box,
+  Button,
+  Dialog,
+  ToggleButton,
   Switch,
   FormControlLabel,
-  styled 
+  styled,
 } from '@mui/material';
 
 interface CellPopupProps {
   open: boolean;
   onClose: () => void;
-  selectedValue: Digits;
+  selectedValue: Digit;
   hints: boolean[];
   isPencilMode: boolean;
   onPencilModeChange: (isOn: boolean) => void;
-  onValueSelect: (value: Digits) => void;
-  onClearCell: (value: Digits) => void;
+  onValueSelect: (value: Digit) => void;
+  onClear: () => void;
   onHintToggle: (hint: number) => void;
   cellIndex: number;
-  cells: Cell[];
+  cells: SudokuCell[];
   settings: GameSettingsType;
 }
 
@@ -40,44 +43,9 @@ const NumberButton = styled(ToggleButton)({
     cursor: 'not-allowed',
     '&:hover': {
       backgroundColor: 'inherit',
-    }
-  }
+    },
+  },
 });
-
-const isNumberValid = (index: number, value: number, cells: Cell[]): boolean => {
-  if (value === 0) return true;
-  
-  const row = Math.floor(index / 9);
-  const col = index % 9;
-  const boxStartRow = Math.floor(row / 3) * 3;
-  const boxStartCol = Math.floor(col / 3) * 3;
-
-  // Check row
-  for (let i = 0; i < 9; i++) {
-    if (i !== col && cells[row * 9 + i].value === value) {
-      return false;
-    }
-  }
-
-  // Check column
-  for (let i = 0; i < 9; i++) {
-    if (i !== row && cells[i * 9 + col].value === value) {
-      return false;
-    }
-  }
-
-  // Check 3x3 box
-  for (let i = 0; i < 3; i++) {
-    for (let j = 0; j < 3; j++) {
-      const cellIndex = (boxStartRow + i) * 9 + (boxStartCol + j);
-      if (cellIndex !== index && cells[cellIndex].value === value) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-};
 
 export default function CellPopup({
   open,
@@ -87,7 +55,7 @@ export default function CellPopup({
   isPencilMode,
   onPencilModeChange,
   onValueSelect,
-  onClearCell,
+  onClear,
   onHintToggle,
   cellIndex,
   cells,
@@ -95,26 +63,31 @@ export default function CellPopup({
 }: CellPopupProps) {
   const handlePencilModeChange = (checked: boolean) => {
     if (checked && selectedValue !== 0) {
-      onClearCell(0);
+      onClear();
     }
     onPencilModeChange(checked);
   };
 
   const handleNumberClick = (value: number) => {
+    if (!isDigit(value) || value === 0) return;
+
     if (isPencilMode) {
       onHintToggle(value);
-    } else {
-      onValueSelect(value as Digits);
-      if (selectedValue === value) {
-        onValueSelect(0);
-      }
-      onClose();
+      return;
     }
+
+    onValueSelect(selectedValue === value ? 0 : value);
+    onClose();
   };
 
-  const shouldCheckValidity = isPencilMode ? 
-    settings.hideImpossibleValuesInHints : 
-    settings.hideImpossibleValuesInSelector;
+  const handleClear = () => {
+    onClear();
+    if (!isPencilMode) onClose();
+  };
+
+  const shouldCheckValidity = isPencilMode
+    ? settings.hideImpossibleValuesInHints
+    : settings.hideImpossibleValuesInSelector;
 
   return (
     <Dialog open={open} onClose={onClose}>
@@ -123,14 +96,14 @@ export default function CellPopup({
           control={
             <Switch
               checked={isPencilMode}
-              onChange={(e) => handlePencilModeChange(e.target.checked)}
+              onChange={(event) => handlePencilModeChange(event.target.checked)}
             />
           }
           label="Pencil mode"
         />
         <NumberGrid>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((number) => {
-            const isValid = shouldCheckValidity ? isNumberValid(cellIndex, number, cells) : true;
+            const isValid = shouldCheckValidity ? isValueAllowed(cells, cellIndex, number) : true;
 
             return (
               <NumberButton
@@ -146,6 +119,9 @@ export default function CellPopup({
             );
           })}
         </NumberGrid>
+        <Button fullWidth onClick={handleClear}>
+          Clear
+        </Button>
       </Box>
     </Dialog>
   );

@@ -1,14 +1,13 @@
-export type GlobalGameState = 'notStarted' | 'selectDifficulty' | 'playing'; 
 export interface GameSettingsType {
-    highlightRowAndColumn: boolean;
-    highlightSameNumbers: boolean;
-    highlightSameHints: boolean;
-    highlightCrossForNumbers: boolean;
-    highlightCrossForHints: boolean;
-    hideImpossibleValuesInSelector: boolean;
-    hideImpossibleValuesInHints: boolean;
-    highlightCurrentQuadrant: boolean;
-    highlightQuadrantsWithSameNumber: boolean;
-    highlightAllObviousCells: boolean;
-    highlightObviousCellsForCurrentNumber: boolean;
+  highlightRowAndColumn: boolean;
+  highlightSameNumbers: boolean;
+  highlightSameHints: boolean;
+  highlightCrossForNumbers: boolean;
+  highlightCrossForHints: boolean;
+  hideImpossibleValuesInSelector: boolean;
+  hideImpossibleValuesInHints: boolean;
+  highlightCurrentQuadrant: boolean;
+  highlightQuadrantsWithSameNumber: boolean;
+  highlightAllObviousCells: boolean;
+  highlightObviousCellsForCurrentNumber: boolean;
 }

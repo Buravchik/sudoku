@@ -1,12 +1,11 @@
 import { GameSettingsType } from '@/types';
 import {
-  Dialog,
   DialogTitle,
   DialogContent,
   FormGroup,
   FormControlLabel,
   Checkbox,
-  IconButton
+  IconButton,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 
@@ -14,23 +13,31 @@ interface GameSettingsProps {
   settings: GameSettingsType;
   onSettingChange: (setting: keyof GameSettingsType) => void;
   onClose: () => void;
-  open: boolean;
 }
 
-export default function GameSettings({ settings, onSettingChange, onClose, open }: GameSettingsProps) {
+const SETTING_FIELDS: { key: keyof GameSettingsType; label: string }[] = [
+  { key: 'highlightRowAndColumn', label: 'Highlight row and column' },
+  { key: 'highlightSameNumbers', label: 'Highlight the same numbers' },
+  { key: 'highlightSameHints', label: 'Highlight the same pencil marks' },
+  { key: 'highlightCrossForNumbers', label: 'Highlight crosses for the same numbers' },
+  { key: 'highlightCrossForHints', label: 'Highlight crosses for the same pencil marks' },
+  { key: 'hideImpossibleValuesInSelector', label: 'Hide impossible numbers in the selector' },
+  { key: 'hideImpossibleValuesInHints', label: 'Hide impossible pencil marks' },
+  { key: 'highlightCurrentQuadrant', label: 'Highlight the current block' },
+  { key: 'highlightQuadrantsWithSameNumber', label: 'Highlight blocks that contain the same number' },
+  { key: 'highlightAllObviousCells', label: 'Highlight every obvious cell' },
+  { key: 'highlightObviousCellsForCurrentNumber', label: 'Highlight obvious cells for the selected number' },
+];
+
+export default function GameSettings({ settings, onSettingChange, onClose }: GameSettingsProps) {
   return (
-    <Dialog 
-      open={open} 
-      onClose={onClose}
-      maxWidth="sm"
-      fullWidth
-    >
-      <DialogTitle sx={{ 
-        m: 0, 
+    <>
+      <DialogTitle sx={{
+        m: 0,
         p: 2,
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
       }}>
         Settings
         <IconButton
@@ -48,27 +55,20 @@ export default function GameSettings({ settings, onSettingChange, onClose, open 
       </DialogTitle>
       <DialogContent dividers>
         <FormGroup>
-          {Object.entries(settings).map(([key, value]) => (
+          {SETTING_FIELDS.map(({ key, label }) => (
             <FormControlLabel
               key={key}
               control={
                 <Checkbox
-                  checked={value}
-                  onChange={() => onSettingChange(key as keyof GameSettingsType)}
+                  checked={settings[key]}
+                  onChange={() => onSettingChange(key)}
                 />
               }
-              label={formatSettingLabel(key)}
+              label={label}
             />
           ))}
         </FormGroup>
       </DialogContent>
-    </Dialog>
+    </>
   );
 }
-
-function formatSettingLabel(key: string): string {
-  return key
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^./, str => str.toUpperCase())
-    .replace(/([A-Z])\s/g, (match) => match.toLowerCase());
-} 

@@ -1,330 +1,301 @@
-"use client"
-import Button from '@mui/material/Button';
-import React, { useState, useEffect } from 'react';
-import { GlobalGameState, SudokuGuruDifficulty, Board, Cell, Digits, Cells } from '@/SudokuGame';
-import { Stack } from '@mui/system';
-import GameBoard from '../GameBoard';
-import SettingsIcon from '@mui/icons-material/Settings';
-import GameSettings from '../GameSettings';
-import { GameSettingsType } from '@/types';
-import styles from './GameWrapper.module.css';
-import { Dialog } from '@mui/material';
+"use client";
 
-interface SavedGameState {
-  gameState: GlobalGameState;
-  difficultyState: SudokuGuruDifficulty | '';
-  boardState: {
-    difficulty: SudokuGuruDifficulty;
-    cells: {
-      value: number;
-      isInitial: boolean;
-      userValue: number;
-      hints: boolean[];
-    }[];
-  } | null;
-  timestamp: number;
-}
+import { clearCell, resetProgress, setUserValue, toggleHint } from '@/sudoku/cells';
+import { DailyChallenge, parseStartParam } from '@/sudoku/daily';
+import { loadDailyPuzzle, loadPuzzle } from '@/sudoku/loadPuzzle';
+import { isSolved } from '@/sudoku/rules';
+import {
+  clearStoredSession,
+  loadDeviceSnapshot,
+  loadSettings,
+  loadStoredSession,
+  saveSettings,
+  saveStoredSession,
+} from '@/sudoku/storage';
+import { Digit, LoadedPuzzle, SudokuGuruDifficulty } from '@/sudoku/types';
+import {
+  hapticImpact,
+  hapticSelection,
+  hapticSuccess,
+  hasDeviceStorage,
+  setClosingConfirmation,
+  readStartParam,
+  shareInTelegram,
+  telegramWebApp,
+} from '@/telegram/webApp';
+import { submitGroupScore } from '@/telegram/submitScore';
+import { GameSettingsType } from '@/types';
+import SettingsIcon from '@mui/icons-material/Settings';
+import { Dialog } from '@mui/material';
+import Button from '@mui/material/Button';
+import { Stack } from '@mui/system';
+import { useEffect, useRef, useState } from 'react';
+import GameBoard from '../GameBoard';
+import GameSettings from '../GameSettings';
+import styles from './GameWrapper.module.css';
 
 export default function GameWrapper() {
-  const [mounted, setMounted] = React.useState(false);
-  const [gameState, setGameState] = React.useState<GlobalGameState>('notStarted');
-  const [difficultyState, setDifficultyState] = React.useState<SudokuGuruDifficulty | ''>('');
-  const [gameBoardState, setGameBoardState] = React.useState<Board | null>(null);
-  const [isLoading, setIsLoading] = React.useState(false);
-  const [time, setTime] = useState(0);
-  const [intervalId, setIntervalId] = useState<NodeJS.Timeout | null>(null);
+  const [session] = useState(loadStoredSession);
+  const [gameState, setGameState] = useState(session.gameState);
+  const [difficultyState, setDifficultyState] = useState(session.difficultyState);
+  const [board, setBoard] = useState<LoadedPuzzle | null>(session.board);
+  const [isLoading, setIsLoading] = useState(false);
+  const [time, setTime] = useState(session.elapsedSeconds);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settings, setSettings] = React.useState<GameSettingsType>(() => {
-    const defaultSettings = {
-      highlightRowAndColumn: true,
-      highlightSameNumbers: true,
-      highlightSameHints: true,
-      highlightCrossForNumbers: true,
-      highlightCrossForHints: false,
-      hideImpossibleValuesInSelector: true,
-      hideImpossibleValuesInHints: true,
-      highlightCurrentQuadrant: true,
-      highlightQuadrantsWithSameNumber: true,
-      highlightAllObviousCells: true,
-      highlightObviousCellsForCurrentNumber: true,
-    };
-    
-    const savedSettings = localStorage.getItem('sudokuGameSettings');
-    if (savedSettings) {
-      const parsedSettings = JSON.parse(savedSettings);
-      
-      // Migrate old setting name to new one
-      if ('highlightObviousCell' in parsedSettings) {
-        parsedSettings.highlightAllObviousCells = parsedSettings.highlightObviousCell;
-        delete parsedSettings.highlightObviousCell;
-        
-        // Save migrated settings back to localStorage
-        localStorage.setItem('sudokuGameSettings', JSON.stringify(parsedSettings));
+  const [settings, setSettings] = useState<GameSettingsType>(loadSettings);
+  const [storageReady, setStorageReady] = useState(() => !hasDeviceStorage());
+  const [homeScreen, setHomeScreen] = useState<'unsupported' | 'unknown' | 'added' | 'missed' | null>(null);
+  const [challenge, setChallenge] = useState<DailyChallenge | null>(session.challenge);
+  const [groupPlace, setGroupPlace] = useState<number | null>(null);
+
+  const timeRef = useRef(time);
+  const boardRef = useRef(board);
+  const gameStateRef = useRef(gameState);
+  const difficultyRef = useRef(difficultyState);
+  const storageReadyRef = useRef(storageReady);
+  const settingsRef = useRef(settings);
+  const previousStateRef = useRef(gameState);
+  const challengeRef = useRef(challenge);
+  const challengeLaunchStarted = useRef(false);
+  timeRef.current = time;
+  boardRef.current = board;
+  gameStateRef.current = gameState;
+  difficultyRef.current = difficultyState;
+  storageReadyRef.current = storageReady;
+  settingsRef.current = settings;
+  challengeRef.current = challenge;
+
+  const persist = useRef(() => {
+    if (!storageReadyRef.current) return;
+    saveStoredSession({
+      gameState: gameStateRef.current,
+      difficultyState: difficultyRef.current,
+      board: boardRef.current,
+      elapsedSeconds: timeRef.current,
+      challenge: challengeRef.current,
+    });
+  }).current;
+
+  useEffect(() => {
+    if (storageReady) return;
+    let cancelled = false;
+    loadDeviceSnapshot().then(snapshot => {
+      if (cancelled) return;
+      if (snapshot.settings) setSettings(snapshot.settings);
+      else if (snapshot.settingsMissing) saveSettings(settingsRef.current);
+      const restored = snapshot.session;
+      if (restored && (restored.gameState === 'playing' || restored.gameState === 'won')) {
+        setGameState(restored.gameState);
+        setDifficultyState(restored.difficultyState);
+        setBoard(restored.board);
+        setTime(restored.elapsedSeconds);
+        setChallenge(restored.challenge);
+        previousStateRef.current = restored.gameState;
       }
-      
-      return { ...defaultSettings, ...parsedSettings };
+      setStorageReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    persist();
+  }, [gameState, difficultyState, board, challenge, persist, storageReady]);
+
+  useEffect(() => {
+    setClosingConfirmation(storageReady && gameState === 'playing');
+  }, [gameState, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || challengeLaunchStarted.current) return;
+    challengeLaunchStarted.current = true;
+    const launch = parseStartParam(readStartParam());
+    if (!launch) return;
+    const current = challengeRef.current;
+    const sameCard = current?.cardId === launch.cardId && current.day === launch.day;
+    if (sameCard && boardRef.current) return;
+    void startChallenge(launch);
+  }, [storageReady]);
+
+  useEffect(() => {
+    if (previousStateRef.current === 'playing' && gameState === 'won') {
+      hapticSuccess();
+      if (challengeRef.current && boardRef.current?.source === 'online') {
+        void submitGroupScore(timeRef.current).then(result => {
+          if (result?.improved) setGroupPlace(result.place);
+        });
+      }
     }
-    
-    return defaultSettings;
-  });
+    previousStateRef.current = gameState;
+  }, [gameState]);
+
+  useEffect(() => {
+    const webApp = telegramWebApp();
+    if (!webApp?.checkHomeScreenStatus) return;
+    let cancelled = false;
+    webApp.checkHomeScreenStatus(status => {
+      if (!cancelled) setHomeScreen(status);
+    });
+    const onAdded = () => setHomeScreen('added');
+    webApp.onEvent('homeScreenAdded', onAdded);
+    return () => {
+      cancelled = true;
+      webApp.offEvent('homeScreenAdded', onAdded);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady || gameState !== 'playing') return;
+    const id = window.setInterval(() => {
+      setTime(previous => previous + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [gameState, storageReady]);
+
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+    const id = window.setInterval(() => persist(), 5000);
+    return () => window.clearInterval(id);
+  }, [gameState, persist]);
+
+  useEffect(() => {
+    const saveIfHidden = () => {
+      if (document.visibilityState === 'hidden') persist();
+    };
+    window.addEventListener('pagehide', persist);
+    document.addEventListener('visibilitychange', saveIfHidden);
+    return () => {
+      window.removeEventListener('pagehide', persist);
+      document.removeEventListener('visibilitychange', saveIfHidden);
+      persist();
+    };
+  }, [persist]);
 
   const handleSettingChange = (setting: keyof GameSettingsType) => {
-    const newSettings = {
-      ...settings,
-      [setting]: !settings[setting]
-    };
-    setSettings(newSettings);
-    localStorage.setItem('sudokuGameSettings', JSON.stringify(newSettings));
+    setSettings(current => {
+      const next = { ...current, [setting]: !current[setting] };
+      saveSettings(next);
+      return next;
+    });
   };
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (gameState === 'playing' && !intervalId) {
-      const id = setInterval(() => {
-        setTime((prevTime) => prevTime + 1);
-      }, 1000);
-      setIntervalId(id);
-    } else if (gameState !== 'playing' && intervalId) {
-      clearInterval(intervalId);
-      setIntervalId(null);
-    }
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [gameState, intervalId]);
-
-  // Load saved game state on mount
-  useEffect(() => {
-    const savedState = localStorage.getItem('sudokuGameState');
-    if (savedState) {
-      try {
-        const parsed: SavedGameState = JSON.parse(savedState);
-        setGameState(parsed.gameState);
-        setDifficultyState(parsed.difficultyState);
-        
-        // Calculate elapsed time from start timestamp
-        const elapsedTime = Math.floor((Date.now() - parsed.timestamp) / 1000);
-        setTime(elapsedTime);
-        
-        if (parsed.boardState) {
-          const restoredCells = parsed.boardState.cells.map(cell => {
-            const newCell = new Cell({
-              initialValue: cell.isInitial ? cell.value as Digits : 0,
-              solutionValue: cell.value as Digits
-            });
-            
-            // If it's a user-entered value, set it via setUserValue
-            if (!cell.isInitial && cell.value) {
-              newCell.setUserValue(cell.value as Digits);
-            }
-            
-            // Restore hints
-            cell.hints.forEach((isSet, index) => {
-              if (isSet) newCell.toggleHint(index + 1);
-            });
-            return newCell;
-          });
-          
-          // Ensure we have a complete set of cells (81 for a Sudoku board)
-          if (restoredCells.length === 81) {
-            setGameBoardState(new Board(parsed.boardState.difficulty, restoredCells as Cells));
-          }
-        }
-      } catch (error) {
-        console.error('Failed to restore game state:', error);
-      }
-    }
-  }, []);
-
-  // First effect for game state
-  useEffect(() => {
-    if (gameState === 'playing' && gameBoardState) {
-      const stateToSave: SavedGameState = {
-        gameState,
-        difficultyState,
-        boardState: {
-          difficulty: gameBoardState.difficulty,
-          cells: gameBoardState.cells.map(cell => ({
-            value: cell.value,
-            isInitial: cell.getInitialValue !== 0,
-            userValue: cell.getUserValue,
-            hints: cell.draftValues,
-          }))
-        },
-        timestamp: Date.now()
-      };
-      
-      localStorage.setItem('sudokuGameState', JSON.stringify(stateToSave));
-    }
-  }, [gameState, difficultyState, gameBoardState]);
 
   const handleNewGame = () => {
-    // Clear saved state when starting new game
-    localStorage.removeItem('sudokuGameState');
+    clearStoredSession();
+    setChallenge(null);
+    setGroupPlace(null);
     setGameState('selectDifficulty');
-    setGameBoardState(null);
+    setBoard(null);
     setTime(0);
-    if (intervalId) {
-      clearInterval(intervalId);
-      setIntervalId(null);
-    }
   };
 
-  const checkGameSolved = (cells: Cell[]): boolean => {
-    // Check if all cells are filled
-    if (cells.some(cell => cell.value === 0)) {
-      return false;
-    }
+  useEffect(() => {
+    if (!board || (gameState !== 'playing' && gameState !== 'won')) return;
+    const solved = isSolved(board.cells);
+    if (solved && gameState !== 'won') setGameState('won');
+    if (!solved && gameState === 'won') setGameState('playing');
+  }, [board, gameState]);
 
-    // Check each row
-    for (let row = 0; row < 9; row++) {
-      const rowValues = new Set();
-      for (let col = 0; col < 9; col++) {
-        rowValues.add(cells[row * 9 + col].value);
-      }
-      if (rowValues.size !== 9) return false;
-    }
-
-    // Check each column
-    for (let col = 0; col < 9; col++) {
-      const colValues = new Set();
-      for (let row = 0; row < 9; row++) {
-        colValues.add(cells[row * 9 + col].value);
-      }
-      if (colValues.size !== 9) return false;
-    }
-
-    // Check each 3x3 box
-    for (let boxRow = 0; boxRow < 3; boxRow++) {
-      for (let boxCol = 0; boxCol < 3; boxCol++) {
-        const boxValues = new Set();
-        for (let i = 0; i < 3; i++) {
-          for (let j = 0; j < 3; j++) {
-            const row = boxRow * 3 + i;
-            const col = boxCol * 3 + j;
-            boxValues.add(cells[row * 9 + col].value);
-          }
-        }
-        if (boxValues.size !== 9) return false;
-      }
-    }
-
-    return true;
-  };
-
-  const handleCellValueChange = (index: number, value: Digits) => {
-    if (gameBoardState) {
-      // Create a new cells array to ensure state update
-      const newCells = [...gameBoardState.cells] as Cells;
-      newCells[index].setUserValue(value);
-      
-      // Create new board with new cells
-      const newBoardState = new Board(gameBoardState.difficulty, newCells);
-      
-      // Force a rerender of GameBoard by creating a new cells reference
-      newBoardState.cells = [...newBoardState.cells] as Cells;
-
-      // Update board state
-      setGameBoardState(newBoardState);
-
-      // Check if game is solved
-      if (checkGameSolved(newCells)) {
-        handleGameSolved();
-        alert(`Congratulations! You solved the puzzle in ${time} seconds!`);
-      }
-    }
+  const handleCellValueChange = (index: number, value: Digit) => {
+    hapticImpact();
+    setBoard(current => replaceCell(current, index, cell => setUserValue(cell, value)));
   };
 
   const handleCellHintToggle = (index: number, hint: number) => {
-    if (gameBoardState) {
-      gameBoardState.cells[index].toggleHint(hint);
-      setGameBoardState(new Board(gameBoardState.difficulty, gameBoardState.cells));
-    }
+    hapticSelection();
+    setBoard(current => replaceCell(current, index, cell => toggleHint(cell, hint)));
   };
 
-  const handleGameSolved = () => {
-    if (intervalId) {
-      clearInterval(intervalId);
-      setIntervalId(null);
-    }
-    setGameState('notStarted');
+  const handleCellClear = (index: number) => {
+    hapticImpact();
+    setBoard(current => replaceCell(current, index, clearCell));
   };
 
-  const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
-    setIsLoading(true);
-    setTime(0);
-
+  const handleShare = async () => {
+    const text = `Solved ${difficultyState || 'a'} sudoku in ${formatTime(time)}.`;
+    const url = window.location.href;
+    if (shareInTelegram(text, url)) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({ text, url });
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+      }
+    }
     try {
-      // Create new board immediately
-      const newBoard = new Board(difficulty);
-      
-      // Wait for the board to be fully initialized
-      await newBoard.initialize(); // Make sure Board class has this method
-      
-      // Only save and update state after board is fully ready
-      const initialState: SavedGameState = {
-        gameState: 'playing',
-        difficultyState: difficulty,
-        boardState: {
-          difficulty: difficulty,
-          cells: newBoard.cells.map(cell => ({
-            value: cell.value,
-            isInitial: cell.getInitialValue !== 0,
-            userValue: cell.getUserValue,
-            hints: cell.draftValues,
-          }))
-        },
-        timestamp: Date.now()
-      };
-
-      // Save to localStorage only after board is fully initialized
-      localStorage.setItem('sudokuGameState', JSON.stringify(initialState));
-      
-      // Update React state after everything is ready
-      setGameState('playing');
-      setDifficultyState(difficulty);
-      setGameBoardState(newBoard);
+      await navigator.clipboard.writeText(`${text} ${url}`);
     } catch (error) {
-      console.error('Failed to create new game:', error);
-      setGameState('notStarted');
+      console.error('Could not share the result:', error);
+    }
+  };
+
+  const handleReset = () => {
+    setBoard(current => current ? { ...current, cells: current.cells.map(resetProgress) } : current);
+    setTime(0);
+    setGameState('playing');
+  };
+
+  const startChallenge = async (launch: DailyChallenge) => {
+    setIsLoading(true);
+    setChallenge(launch);
+    setDifficultyState(launch.difficulty);
+    setGroupPlace(null);
+    setBoard(null);
+    setGameState('notStarted');
+    setTime(0);
+    clearStoredSession();
+    try {
+      const puzzle = await loadDailyPuzzle(launch.difficulty, launch.day);
+      setBoard(puzzle);
+      setGameState('playing');
+    } catch (error) {
+      console.error('Failed to open the chat puzzle:', error);
+      setBoard(null);
+      setGameState('error');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const formatTime = (totalSeconds: number): string => {
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
+  const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
+    setIsLoading(true);
+    setChallenge(null);
+    setGroupPlace(null);
+    setDifficultyState(difficulty);
+    setBoard(null);
+    setGameState('notStarted');
+    setTime(0);
+    clearStoredSession();
 
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    try {
+      const puzzle = await loadPuzzle(difficulty);
+      setBoard(puzzle);
+      setGameState('playing');
+    } catch (error) {
+      console.error('Failed to create new game:', error);
+      setBoard(null);
+      setGameState('error');
+    } finally {
+      setIsLoading(false);
     }
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  if (!mounted) {
-    return null;
-  }
+  const activeBoard = gameState === 'playing' || gameState === 'won' ? board : null;
 
   return (
-    <div className={styles.gameWrapper}>
-      <div className={styles.gameHeader}>
+    <div className={`${styles.gameWrapper} game-shell`}>
+      <div className={`${styles.gameHeader} game-header`}>
         <div className={styles.title}>
           <span className={styles.difficulty}>
-            Game - {difficultyState}
+            {difficultyState ? `Game - ${difficultyState}` : 'Game'}
           </span>
           <span className={styles.timer}>
             {" - Time: "}{formatTime(time)}
           </span>
         </div>
-        <Button 
+        <Button
           className={styles.settingsButton}
           onClick={() => setIsSettingsOpen(true)}
           aria-label="Settings"
@@ -333,86 +304,105 @@ export default function GameWrapper() {
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className={styles.loadingContainer}>
-          Loading...
-        </div>
+      {challenge && activeBoard && (
+        <p className={styles.notice}>Chat puzzle, {challenge.difficulty}.</p>
+      )}
+      {activeBoard?.source === 'offline' && (
+        <p className={styles.notice}>Online puzzles are unavailable. This round uses an offline puzzle.</p>
+      )}
+      {gameState === 'won' && (
+        <p className={styles.winBanner}>
+          Solved in {formatTime(time)}.
+          {groupPlace ? ` ${placeLabel(groupPlace)} in the chat today.` : ''}
+        </p>
+      )}
+
+      {isLoading || !storageReady ? (
+        <div className={styles.loadingContainer}>Loading...</div>
       ) : (
         <>
-          <Stack spacing={2} sx={{ 
+          <Stack spacing={2} sx={{
             width: '100%',
             '& .MuiButton-root': {
               height: '36px',
               borderRadius: '4px',
               textTransform: 'uppercase',
-              color: 'rgb(25, 118, 210)',
-              borderColor: 'rgb(25, 118, 210)',
-              '&:hover': {
-                borderColor: 'rgb(25, 118, 210)',
-                backgroundColor: 'rgba(25, 118, 210, 0.04)'
-              }
-            }
+            },
           }}>
             {gameState !== 'selectDifficulty' && (
-              <Button 
-                variant="outlined" 
-                onClick={handleNewGame}
-                fullWidth
-              >
+              <Button variant="outlined" onClick={handleNewGame} fullWidth>
                 New Game
               </Button>
             )}
-            
-            {gameState === 'playing' && (
-              <Button 
-                variant="outlined"
-                onClick={() => {
-                  if (gameBoardState) {
-                    const resetCells = gameBoardState.cells.map(cell => {
-                      const newCell = new Cell({
-                        initialValue: cell.getInitialValue,
-                        solutionValue: cell.getInitialValue
-                      });
-                      return newCell;
-                    });
-                    
-                    setGameBoardState(new Board(gameBoardState.difficulty, resetCells as Cells));
-                  }
-                }}
-                fullWidth
-              >
+
+            {activeBoard && (
+              <Button variant="outlined" onClick={handleReset} fullWidth>
                 Start from scratch
               </Button>
             )}
 
+            {gameState === 'won' && (
+              <Button variant="outlined" onClick={() => void handleShare()} fullWidth>
+                Share result
+              </Button>
+            )}
+
+            {(homeScreen === 'missed' || homeScreen === 'unknown') && (
+              <Button
+                variant="outlined"
+                onClick={() => telegramWebApp()?.addToHomeScreen?.()}
+                fullWidth
+              >
+                Add to Home Screen
+              </Button>
+            )}
+
             {gameState === 'selectDifficulty' && (
-              Object.values(SudokuGuruDifficulty).map((difficulty) => (
-                <Button 
+              Object.values(SudokuGuruDifficulty).map(difficulty => (
+                <Button
                   key={difficulty}
-                  variant="outlined" 
-                  onClick={() => handleStartGame(difficulty as SudokuGuruDifficulty)}
+                  variant="outlined"
+                  onClick={() => handleStartGame(difficulty)}
                   fullWidth
                 >
                   {difficulty}
                 </Button>
               ))
             )}
+
+            {gameState === 'error' && (
+              <>
+                <p className={styles.errorText}>Could not load a puzzle.</p>
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    if (difficultyState) void handleStartGame(difficultyState);
+                  }}
+                  fullWidth
+                  disabled={!difficultyState}
+                >
+                  Try again
+                </Button>
+              </>
+            )}
           </Stack>
 
-          {gameState === 'playing' && (
+          {activeBoard && (
             <div className={styles.gameBoard}>
               <GameBoard
-                cells={gameBoardState?.cells || null}
+                cells={activeBoard.cells}
                 onCellValueChange={handleCellValueChange}
                 onCellHintToggle={handleCellHintToggle}
+                onCellClear={handleCellClear}
                 settings={settings}
               />
             </div>
           )}
         </>
       )}
-      <Dialog 
-        open={isSettingsOpen} 
+
+      <Dialog
+        open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         maxWidth="sm"
         fullWidth
@@ -421,9 +411,42 @@ export default function GameWrapper() {
           settings={settings}
           onSettingChange={handleSettingChange}
           onClose={() => setIsSettingsOpen(false)}
-          open={isSettingsOpen}
         />
       </Dialog>
     </div>
-  )
+  );
+}
+
+function replaceCell(
+  board: LoadedPuzzle | null,
+  index: number,
+  update: (cell: LoadedPuzzle['cells'][number]) => LoadedPuzzle['cells'][number],
+): LoadedPuzzle | null {
+  if (!board) return board;
+  const nextCell = update(board.cells[index]);
+  if (nextCell === board.cells[index]) return board;
+  return {
+    ...board,
+    cells: board.cells.map((cell, cellIndex) => cellIndex === index ? nextCell : cell),
+  };
+}
+
+function placeLabel(place: number): string {
+  const mod100 = place % 100;
+  const mod10 = place % 10;
+  const suffix = mod100 >= 11 && mod100 <= 13
+    ? 'th'
+    : mod10 === 1 ? 'st' : mod10 === 2 ? 'nd' : mod10 === 3 ? 'rd' : 'th';
+  return `${place}${suffix}`;
+}
+
+function formatTime(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  }
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }

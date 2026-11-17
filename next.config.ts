@@ -14,9 +14,8 @@ const nextConfig: NextConfig = {
   // Remove headers configuration since it's not compatible with export
   env: {
     NEXT_PUBLIC_GA_MEASUREMENT_ID: process.env.GA_MEASUREMENT_ID,
+    NEXT_PUBLIC_SCORE_URL: process.env.SCORE_URL,
   },
 };
-
-console.log("GA Measurement ID (Build):", process.env.GA_MEASUREMENT_ID);
 
 export default nextConfig;

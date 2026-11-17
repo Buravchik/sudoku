@@ -1,135 +1,129 @@
-import { Cells, Digits, Cell } from '@/SudokuGame';
-import React from 'react';
+import { cellValue, isChangeable } from '@/sudoku/cells';
+import { boxStart, colOf, nakedSingleIndexes, nakedSingleIndexesForNumber, rowOf } from '@/sudoku/rules';
+import { Digit, SudokuCell } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
-import styles from './GameBoard.module.css';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CellPopup from '../CellPopup';
+import styles from './GameBoard.module.css';
 
 interface GameBoardProps {
-  cells: Cells | null;
-  onCellValueChange: (index: number, value: Digits) => void;
+  cells: SudokuCell[];
+  onCellValueChange: (index: number, value: Digit) => void;
   onCellHintToggle: (index: number, hint: number) => void;
+  onCellClear: (index: number) => void;
   settings: GameSettingsType;
 }
 
 interface CellContentProps {
-  cell: Cell;
+  cell: SudokuCell;
   highlightedHints: Set<number>;
   settings: GameSettingsType;
 }
 
-export default function GameBoard({ cells, onCellValueChange, onCellHintToggle, settings }: GameBoardProps) {
-  const [selectedForEdit, setSelectedForEdit] = React.useState<number | null>(null);
-  const [clickedCell, setClickedCell] = React.useState<number | null>(null);
-  const [highlightedCells, setHighlightedCells] = React.useState<Set<number>>(new Set());
-  const [highlightedHints, setHighlightedHints] = React.useState<Set<number>>(new Set());
-  const [isPencilMode, setIsPencilMode] = React.useState(false);
-  const [selectedCell, setSelectedCell] = React.useState<number | null>(null);
+interface HighlightSets {
+  cellHighlights: Set<number>;
+  hintHighlights: Set<number>;
+}
 
-  const calculateHighlights = React.useCallback((cells: Cells | null, index: number, value: Digits, settings: GameSettingsType) => {
-    if (!cells) return {
-      cellHighlights: new Set<number>(),
-      hintHighlights: new Set<number>()
-    };
-    
-    const row = Math.floor(index / 9);
-    const col = index % 9;
-    const boxStartRow = Math.floor(row / 3) * 3;
-    const boxStartCol = Math.floor(col / 3) * 3;
-    
+export default function GameBoard({
+  cells,
+  onCellValueChange,
+  onCellHintToggle,
+  onCellClear,
+  settings,
+}: GameBoardProps) {
+  const [selectedForEdit, setSelectedForEdit] = useState<number | null>(null);
+  const [clickedCell, setClickedCell] = useState<number | null>(null);
+  const [highlightedCells, setHighlightedCells] = useState<Set<number>>(new Set());
+  const [highlightedHints, setHighlightedHints] = useState<Set<number>>(new Set());
+  const [isPencilMode, setIsPencilMode] = useState(false);
+  const [selectedCell, setSelectedCell] = useState<number | null>(null);
+
+  const calculateHighlights = useCallback((
+    board: SudokuCell[],
+    index: number,
+    value: Digit,
+    activeSettings: GameSettingsType,
+  ): HighlightSets => {
+    const row = rowOf(index);
+    const col = colOf(index);
+    const { row: boxRow, col: boxCol } = boxStart(index);
     const cellHighlights = new Set<number>();
     const hintHighlights = new Set<number>();
 
-    // Highlight current 3x3 quadrant
-    if (settings.highlightCurrentQuadrant) {
-      for (let i = 0; i < 3; i++) {
-        for (let j = 0; j < 3; j++) {
-          cellHighlights.add((boxStartRow + i) * 9 + (boxStartCol + j));
+    if (activeSettings.highlightCurrentQuadrant) {
+      for (let rowOffset = 0; rowOffset < 3; rowOffset++) {
+        for (let colOffset = 0; colOffset < 3; colOffset++) {
+          cellHighlights.add((boxRow + rowOffset) * 9 + boxCol + colOffset);
         }
       }
     }
 
-    // Row and column highlights for clicked cell
-    if (settings.highlightRowAndColumn) {
-      for (let i = 0; i < 9; i++) {
-        cellHighlights.add(row * 9 + i);
-        cellHighlights.add(i * 9 + col);
+    if (activeSettings.highlightRowAndColumn) {
+      for (let offset = 0; offset < 9; offset++) {
+        cellHighlights.add(row * 9 + offset);
+        cellHighlights.add(offset * 9 + col);
       }
     }
 
-    // Number highlights
     if (value !== 0) {
       cellHighlights.add(index);
 
-      if (settings.highlightSameNumbers) {
-        // First find all cells with the same number
+      if (activeSettings.highlightSameNumbers) {
         const matchingCells: number[] = [];
-        for (let i = 0; i < 81; i++) {
-          if (cells[i].value === value) {
-            cellHighlights.add(i);
-            matchingCells.push(i);
-            
-            // Highlight quadrants containing same number
-            if (settings.highlightQuadrantsWithSameNumber) {
-              const matchRow = Math.floor(i / 9);
-              const matchCol = i % 9;
-              const matchBoxStartRow = Math.floor(matchRow / 3) * 3;
-              const matchBoxStartCol = Math.floor(matchCol / 3) * 3;
-              
-              // Add all cells in the matching number's quadrant
-              for (let r = 0; r < 3; r++) {
-                for (let c = 0; c < 3; c++) {
-                  cellHighlights.add((matchBoxStartRow + r) * 9 + (matchBoxStartCol + c));
-                }
+        for (let cellIndex = 0; cellIndex < 81; cellIndex++) {
+          if (cellValue(board[cellIndex]) !== value) continue;
+          cellHighlights.add(cellIndex);
+          matchingCells.push(cellIndex);
+
+          if (activeSettings.highlightQuadrantsWithSameNumber) {
+            const { row: matchBoxRow, col: matchBoxCol } = boxStart(cellIndex);
+            for (let rowOffset = 0; rowOffset < 3; rowOffset++) {
+              for (let colOffset = 0; colOffset < 3; colOffset++) {
+                cellHighlights.add((matchBoxRow + rowOffset) * 9 + matchBoxCol + colOffset);
               }
             }
           }
         }
 
-        // Then highlight crosses for all matching cells if enabled
-        if (settings.highlightCrossForNumbers) {
+        if (activeSettings.highlightCrossForNumbers) {
           matchingCells.forEach(cellIndex => {
-            const matchRow = Math.floor(cellIndex / 9);
-            const matchCol = cellIndex % 9;
-            for (let i = 0; i < 9; i++) {
-              cellHighlights.add(matchRow * 9 + i);
-              cellHighlights.add(i * 9 + matchCol);
+            const matchRow = rowOf(cellIndex);
+            const matchCol = colOf(cellIndex);
+            for (let offset = 0; offset < 9; offset++) {
+              cellHighlights.add(matchRow * 9 + offset);
+              cellHighlights.add(offset * 9 + matchCol);
             }
           });
         }
       }
-      
-      if (settings.highlightSameHints) {
+
+      if (activeSettings.highlightSameHints) {
         hintHighlights.add(value);
-        
-        // Find cells with matching hints and highlight their crosses if enabled
-        if (settings.highlightCrossForHints) {
-          for (let i = 0; i < 81; i++) {
-            if (cells[i].value === 0 && cells[i].draftValues[value - 1]) {
-              const hintRow = Math.floor(i / 9);
-              const hintCol = i % 9;
-              // Highlight crosses for cells with matching hints
-              for (let j = 0; j < 9; j++) {
-                cellHighlights.add(hintRow * 9 + j);
-                cellHighlights.add(j * 9 + hintCol);
-              }
+        if (activeSettings.highlightCrossForHints) {
+          for (let cellIndex = 0; cellIndex < 81; cellIndex++) {
+            const cell = board[cellIndex];
+            if (cellValue(cell) !== 0 || !cell.draftValues[value - 1]) continue;
+            const hintRow = rowOf(cellIndex);
+            const hintCol = colOf(cellIndex);
+            for (let offset = 0; offset < 9; offset++) {
+              cellHighlights.add(hintRow * 9 + offset);
+              cellHighlights.add(offset * 9 + hintCol);
             }
           }
         }
       }
-    } 
-    
-    // Hint highlights
-    else if (settings.highlightSameHints) {
-      const selectedCellHints = cells[index].draftValues;
-      const clickedHintIndex = selectedCellHints.findIndex(isSet => isSet);
-      
-      if (clickedHintIndex !== -1 && selectedCellHints.filter(isSet => isSet).length === 1) {
-        hintHighlights.add(clickedHintIndex + 1);
+    } else if (activeSettings.highlightSameHints) {
+      const selectedDrafts = board[index].draftValues;
+      const selectedHint = selectedDrafts.findIndex(isSet => isSet);
+      const selectedCount = selectedDrafts.filter(isSet => isSet).length;
+      if (selectedHint !== -1 && selectedCount === 1) {
+        hintHighlights.add(selectedHint + 1);
         cellHighlights.add(index);
-        
-        for (let i = 0; i < 81; i++) {
-          if (i !== index && cells[i].value === 0 && cells[i].draftValues[clickedHintIndex]) {
-            cellHighlights.add(i);
+        for (let cellIndex = 0; cellIndex < 81; cellIndex++) {
+          const cell = board[cellIndex];
+          if (cellIndex !== index && cellValue(cell) === 0 && cell.draftValues[selectedHint]) {
+            cellHighlights.add(cellIndex);
           }
         }
       }
@@ -138,229 +132,81 @@ export default function GameBoard({ cells, onCellValueChange, onCellHintToggle, 
     return { cellHighlights, hintHighlights };
   }, []);
 
-  // Update the useEffect to make sure we're setting the hints correctly
-  React.useEffect(() => {
-    if (clickedCell !== null && cells) {
-      const value = cells[clickedCell].value;
-      const { cellHighlights, hintHighlights } = calculateHighlights(cells, clickedCell, value, settings);
-      
-      setHighlightedCells(cellHighlights);
-      // Always set the hint highlights if we have them
-      setHighlightedHints(hintHighlights);
-    }
+  useEffect(() => {
+    if (clickedCell === null) return;
+    const value = cellValue(cells[clickedCell]);
+    const next = calculateHighlights(cells, clickedCell, value, settings);
+    setHighlightedCells(next.cellHighlights);
+    setHighlightedHints(next.hintHighlights);
   }, [cells, clickedCell, settings, calculateHighlights]);
 
-  const handleCellClick = (index: number) => {
-    if (cells) {
-      const cell = cells[index];
-      
-      // If clicking the already selected cell, open editor
-      if (selectedCell === index && cell.isChangeable) {
-        setSelectedForEdit(index);
-      }
-      
-      setSelectedCell(index);
-      setClickedCell(index);
-      
-      // Calculate highlights for the clicked cell
-      const { cellHighlights, hintHighlights } = calculateHighlights(cells, index, cell.value, settings);
-      setHighlightedCells(cellHighlights);
-      setHighlightedHints(hintHighlights);
+  const obviousCells = useMemo(() => {
+    if (settings.highlightAllObviousCells) return nakedSingleIndexes(cells);
+    if (
+      settings.highlightObviousCellsForCurrentNumber &&
+      clickedCell !== null &&
+      cellValue(cells[clickedCell]) !== 0
+    ) {
+      return nakedSingleIndexesForNumber(cells, cellValue(cells[clickedCell]));
     }
+    return new Set<number>();
+  }, [cells, settings.highlightAllObviousCells, settings.highlightObviousCellsForCurrentNumber, clickedCell]);
+
+  const handleCellClick = (index: number) => {
+    if (selectedCell === index && isChangeable(cells[index])) {
+      setSelectedForEdit(index);
+    }
+    setSelectedCell(index);
+    setClickedCell(index);
   };
 
   const handleCellDoubleClick = (index: number) => {
-    if (cells && cells[index].isChangeable) {
+    if (isChangeable(cells[index])) {
       setSelectedCell(index);
+      setClickedCell(index);
       setSelectedForEdit(index);
     }
   };
 
-  const findObviousCells = React.useCallback((cells: Cells): Set<number> => {
-    const obviousCells = new Set<number>();
-    
-    if (!cells) return obviousCells;
-    
-    for (let i = 0; i < 81; i++) {
-      if (cells[i].value !== 0) {
-        continue;
-      }
-      
-      const row = Math.floor(i / 9);
-      const col = i % 9;
-      const boxStartRow = Math.floor(row / 3) * 3;
-      const boxStartCol = Math.floor(col / 3) * 3;
-      
-      const possibleValues = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      
-      // Remove values from row
-      for (let c = 0; c < 9; c++) {
-        const value = cells[row * 9 + c].value;
-        if (value !== 0) possibleValues.delete(value);
-      }
-      
-      // Remove values from column
-      for (let r = 0; r < 9; r++) {
-        const value = cells[r * 9 + col].value;
-        if (value !== 0) possibleValues.delete(value);
-      }
-      
-      // Remove values from 3x3 box
-      for (let r = 0; r < 3; r++) {
-        for (let c = 0; c < 3; c++) {
-          const value = cells[(boxStartRow + r) * 9 + boxStartCol + c].value;
-          if (value !== 0) possibleValues.delete(value);
-        }
-      }
-      
-      if (possibleValues.size === 1) {
-        obviousCells.add(i);
-      }
-    }
-    
-    return obviousCells;
-  }, []);
-
-  const findObviousCellsForNumber = React.useCallback((cells: Cells, number: Digits): Set<number> => {
-    const obviousCells = new Set<number>();
-    
-    for (let i = 0; i < 81; i++) {
-      if (cells[i].value !== 0) continue;
-      
-      const row = Math.floor(i / 9);
-      const col = i % 9;
-      const boxStartRow = Math.floor(row / 3) * 3;
-      const boxStartCol = Math.floor(col / 3) * 3;
-      
-      const possibleValues = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      
-      // Remove values from row
-      for (let c = 0; c < 9; c++) {
-        const value = cells[row * 9 + c].value;
-        if (value !== 0) possibleValues.delete(value);
-      }
-      
-      // Remove values from column
-      for (let r = 0; r < 9; r++) {
-        const value = cells[r * 9 + col].value;
-        if (value !== 0) possibleValues.delete(value);
-      }
-      
-      // Remove values from 3x3 box
-      for (let r = 0; r < 3; r++) {
-        for (let c = 0; c < 3; c++) {
-          const value = cells[(boxStartRow + r) * 9 + boxStartCol + c].value;
-          if (value !== 0) possibleValues.delete(value);
-        }
-      }
-      
-      // If only this number is possible, it's an obvious cell
-      if (possibleValues.size === 1 && possibleValues.has(number)) {
-        obviousCells.add(i);
-      }
-    }
-    
-    return obviousCells;
-  }, []);
-
-  const obviousCells = React.useMemo(() => {
-    if (!cells) return new Set<number>();
-    
-    if (settings.highlightAllObviousCells) {
-      return findObviousCells(cells);
-    }
-    
-    if (settings.highlightObviousCellsForCurrentNumber && clickedCell !== null) {
-      const clickedValue = cells[clickedCell].value;
-      
-      if (clickedValue !== 0) {
-        const obvious = findObviousCellsForNumber(cells, clickedValue);
-        return obvious;
-      }
-    }
-    
-    return new Set<number>();
-  }, [cells, settings.highlightAllObviousCells, settings.highlightObviousCellsForCurrentNumber, clickedCell, findObviousCells, findObviousCellsForNumber]);
-
-  // Add obvious class to cell className
-  const getCellClassName = (index: number, isHighlighted: boolean) => {
-    return `${styles.cell} ${isHighlighted ? styles.highlighted : ''} ${obviousCells.has(index) ? styles.obvious : ''}`;
+  const cellClassName = (index: number) => {
+    const classNames = [styles.cell];
+    if (highlightedCells.has(index)) classNames.push(styles.highlighted);
+    if (obviousCells.has(index)) classNames.push(styles.obvious);
+    if (selectedCell === index) classNames.push(styles.clicked);
+    return classNames.join(' ');
   };
+
+  const editingCell = selectedForEdit !== null ? cells[selectedForEdit] : null;
 
   return (
     <div className={styles.gameBoard}>
-      <div className={styles.boardGrid}>
-        {Array.from({ length: 81 }).map((_, index) => (
-          <div 
-            key={index} 
-            className={getCellClassName(index, highlightedCells.has(index))}
+      <div className={`${styles.boardGrid} board-grid`}>
+        {cells.map((cell, index) => (
+          <div
+            key={index}
+            className={cellClassName(index)}
             onClick={() => handleCellClick(index)}
             onDoubleClick={() => handleCellDoubleClick(index)}
           >
-            {cells && <CellContent 
-              cell={cells[index]}
+            <CellContent
+              cell={cell}
               highlightedHints={highlightedHints}
               settings={settings}
-            />}
+            />
           </div>
         ))}
       </div>
-      {selectedForEdit !== null && cells?.[selectedForEdit] && (
+      {editingCell && selectedForEdit !== null && (
         <CellPopup
           open={true}
           onClose={() => setSelectedForEdit(null)}
-          selectedValue={cells[selectedForEdit].value}
-          hints={cells[selectedForEdit].draftValues}
+          selectedValue={cellValue(editingCell)}
+          hints={editingCell.draftValues}
           isPencilMode={isPencilMode}
           onPencilModeChange={setIsPencilMode}
-          onValueSelect={(value) => {
-            onCellValueChange(selectedForEdit, value);
-            setClickedCell(selectedForEdit);
-            
-            if (cells) {
-              const { cellHighlights, hintHighlights } = calculateHighlights(
-                cells,
-                selectedForEdit,
-                value,
-                settings
-              );
-              setHighlightedCells(cellHighlights);
-              setHighlightedHints(
-                value === 0 && settings.highlightSameHints ? hintHighlights : new Set()
-              );
-            }
-            setSelectedForEdit(null);
-          }}
-          onClearCell={(value) => {
-            onCellValueChange(selectedForEdit, value);
-            setClickedCell(selectedForEdit);
-            
-            if (cells) {
-              const { cellHighlights, hintHighlights } = calculateHighlights(
-                cells,
-                selectedForEdit,
-                0,
-                settings
-              );
-              setHighlightedCells(cellHighlights);
-              setHighlightedHints(settings.highlightSameHints ? hintHighlights : new Set());
-            }
-          }}
-          onHintToggle={(hint) => {
-            onCellHintToggle(selectedForEdit, hint);
-            setClickedCell(selectedForEdit);
-            
-            if (cells) {
-              const { cellHighlights, hintHighlights } = calculateHighlights(
-                cells,
-                selectedForEdit,
-                0,
-                settings
-              );
-              setHighlightedCells(cellHighlights);
-              setHighlightedHints(settings.highlightSameHints ? hintHighlights : new Set());
-            }
-          }}
+          onValueSelect={(value) => onCellValueChange(selectedForEdit, value)}
+          onClear={() => onCellClear(selectedForEdit)}
+          onHintToggle={(hint) => onCellHintToggle(selectedForEdit, hint)}
           cellIndex={selectedForEdit}
           cells={cells}
           settings={settings}
@@ -370,22 +216,22 @@ export default function GameBoard({ cells, onCellValueChange, onCellHintToggle, 
   );
 }
 
-const CellContent = React.memo(({ cell, highlightedHints, settings }: CellContentProps) => {
-  if (cell.getInitialValue !== 0) {
-    return <span className={styles.initialValue}>{cell.getInitialValue}</span>;
+function CellContent({ cell, highlightedHints, settings }: CellContentProps) {
+  if (cell.initialValue !== 0) {
+    return <span className={styles.initialValue}>{cell.initialValue}</span>;
   }
 
-  if (cell.getUserValue !== 0) {
-    return <span className={styles.userValue}>{cell.getUserValue}</span>;
+  if (cell.userValue !== 0) {
+    return <span className={styles.userValue}>{cell.userValue}</span>;
   }
 
-  if (cell.draftValues.some(v => v)) {
+  if (cell.draftValues.some(flag => flag)) {
     return (
       <div className={styles.hintsContainer}>
         {cell.draftValues.map((isSet, index) => {
-          const shouldHighlight = settings.highlightSameHints && highlightedHints?.has(index + 1);
+          const shouldHighlight = settings.highlightSameHints && highlightedHints.has(index + 1);
           return (
-            <div 
+            <div
               key={index}
               className={`${styles.hint} ${isSet && shouldHighlight ? styles.highlighted : ''}`}
             >
@@ -398,6 +244,4 @@ const CellContent = React.memo(({ cell, highlightedHints, settings }: CellConten
   }
 
   return null;
-});
-
-CellContent.displayName = 'CellContent';
+}

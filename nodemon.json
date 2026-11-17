@@ -1,5 +1,5 @@
 {
-  "watch": ["src"],
+  "watch": ["src/telegram"],
   "ext": "ts",
-  "exec": "ts-node ./src/index.ts"
+  "exec": "npm run bot:start"
 }
