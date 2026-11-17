@@ -274,21 +274,20 @@
 .raceTrack {
   height: 4px;
   border-radius: 99px;
-  background: var(--grid-line);
+  background: var(--secondary-container);
   overflow: hidden;
 }
 
-.raceFill {
-  height: 100%;
-  border-radius: 99px;
-  background: var(--cell-selected-ring);
-}
-
+.raceFill,
 .raceFillGhost {
   height: 100%;
   border-radius: 99px;
-  background: var(--cell-selected-ring);
-  opacity: 0.4;
+  background: var(--primary);
+  transition: width var(--motion-spatial);
+}
+
+.raceFillGhost {
+  opacity: 0.45;
 }
 
 .winBanner {

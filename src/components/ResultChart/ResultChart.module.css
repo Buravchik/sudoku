@@ -32,7 +32,7 @@
 }
 
 .rival {
-  stroke: var(--muted);
+  stroke: var(--on-secondary-container);
 }
 
 .legend,
@@ -61,7 +61,7 @@
 }
 
 .rivalKey::before {
-  background: var(--muted);
+  background: var(--on-secondary-container);
 }
 
 .summary {

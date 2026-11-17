@@ -223,83 +223,47 @@ export function shareInTelegram(text: string, url: string): boolean {
   return true;
 }
 
-const LIGHT_TOKENS: Record<string, string> = {
-  '--background': '#ffffff',
-  '--foreground': '#171717',
-  '--header-bg': '#f5f5f5',
-  '--header-fg': '#171717',
-  '--muted': '#666666',
-  '--grid-line': '#cccccc',
-  '--grid-border': '#666666',
-  '--cell-bg': '#ffffff',
-  '--cell-hover': '#f5f5f5',
-  '--cell-highlight': '#e3f2fd',
-  '--cell-highlight-hover': '#bbdefb',
-  '--cell-obvious': 'rgba(255, 255, 0, 0.3)',
-  '--cell-obvious-hover': 'rgba(255, 255, 0, 0.4)',
-  '--cell-selected': '#90caf9',
-  '--cell-selected-hover': '#64b5f6',
-  '--cell-selected-ring': '#1565c0',
-  '--clue': '#000000',
-  '--entry': '#666666',
-  '--hint': '#666666',
-  '--win': '#1b5e20',
-  '--error': '#b71c1c',
-  '--cell-shadow': '0 1px 3px rgba(0, 0, 0, 0.12)',
-};
-
-const DARK_TOKENS: Record<string, string> = {
-  '--background': '#0a0a0a',
-  '--foreground': '#ededed',
-  '--header-bg': '#1e1e1e',
-  '--header-fg': '#ededed',
-  '--muted': '#b0b0b0',
-  '--grid-line': '#3a3a3a',
-  '--grid-border': '#9e9e9e',
-  '--cell-bg': '#161616',
-  '--cell-hover': '#242424',
-  '--cell-highlight': '#1e4d6e',
-  '--cell-highlight-hover': '#2a6494',
-  '--cell-obvious': 'rgba(255, 214, 0, 0.28)',
-  '--cell-obvious-hover': 'rgba(255, 214, 0, 0.4)',
-  '--cell-selected': '#1565c0',
-  '--cell-selected-hover': '#1976d2',
-  '--cell-selected-ring': '#90caf9',
-  '--clue': '#f5f5f5',
-  '--entry': '#90caf9',
-  '--hint': '#bdbdbd',
-  '--win': '#81c784',
-  '--error': '#ef9a9a',
-  '--cell-shadow': 'none',
-};
+const CHAT_COLOR_PROPERTIES = [
+  '--header-bg',
+  '--grid-line',
+  '--grid-border',
+  '--cell-bg',
+  '--cell-hover',
+  '--cell-highlight',
+  '--cell-highlight-hover',
+  '--cell-obvious',
+  '--cell-obvious-hover',
+  '--cell-selected',
+  '--cell-selected-hover',
+  '--cell-selected-ring',
+  '--clue',
+  '--entry',
+  '--hint',
+  '--win',
+  '--error',
+  '--cell-shadow',
+];
 
 export function applyTelegramChrome(): void {
   const webApp = telegramWebApp();
   if (!webApp) return;
 
   const root = document.documentElement;
-  const tokens = webApp.colorScheme === 'dark' ? DARK_TOKENS : LIGHT_TOKENS;
   root.style.colorScheme = webApp.colorScheme;
-  Object.entries(tokens).forEach(([name, value]) => root.style.setProperty(name, value));
+  for (const name of CHAT_COLOR_PROPERTIES) root.style.removeProperty(name);
 
   const params = webApp.themeParams;
-  if (params.bg_color) {
-    root.style.setProperty('--background', params.bg_color);
-    root.style.setProperty('--cell-bg', params.bg_color);
-  }
-  if (params.secondary_bg_color) {
-    root.style.setProperty('--header-bg', params.secondary_bg_color);
-    root.style.setProperty('--cell-hover', params.secondary_bg_color);
-  }
+  if (params.bg_color) root.style.setProperty('--background', params.bg_color);
+  else root.style.removeProperty('--background');
   if (params.text_color) {
     root.style.setProperty('--foreground', params.text_color);
     root.style.setProperty('--header-fg', params.text_color);
-    root.style.setProperty('--clue', params.text_color);
+  } else {
+    root.style.removeProperty('--foreground');
+    root.style.removeProperty('--header-fg');
   }
-  if (params.hint_color) {
-    root.style.setProperty('--muted', params.hint_color);
-    root.style.setProperty('--hint', params.hint_color);
-  }
+  if (params.hint_color) root.style.setProperty('--muted', params.hint_color);
+  else root.style.removeProperty('--muted');
 
   webApp.setHeaderColor?.('bg_color');
   webApp.setBackgroundColor?.('bg_color');
