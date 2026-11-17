@@ -1,3 +1,4 @@
+import { readSettingsSnapshot } from '@/sudoku/duel';
 import { compactPaceForSend, PaceSample } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
@@ -14,6 +15,7 @@ export interface MatchState {
   difficulty: SudokuGuruDifficulty;
   level: number;
   leader: MatchLeader | null;
+  settings: GameSettingsType | null;
 }
 
 function endpoint(suffix: string): string | null {
@@ -32,9 +34,14 @@ export async function fetchMatchState(settings?: GameSettingsType, forfeit = fal
       body: JSON.stringify({ initData, matchId: readStartParam(), settings, forfeit }),
     });
     if (!response.ok) return null;
-    const payload = await response.json() as { ok?: boolean; difficulty?: SudokuGuruDifficulty; level?: number; leader?: MatchLeader | null };
+    const payload = await response.json() as { ok?: boolean; difficulty?: SudokuGuruDifficulty; level?: number; leader?: MatchLeader | null; settings?: unknown };
     if (!payload.ok || !payload.difficulty || typeof payload.level !== 'number') return null;
-    return { difficulty: payload.difficulty, level: payload.level, leader: payload.leader ?? null };
+    return {
+      difficulty: payload.difficulty,
+      level: payload.level,
+      leader: payload.leader ?? null,
+      settings: readSettingsSnapshot(payload.settings),
+    };
   } catch (error) {
     console.error('Failed to open the shared puzzle.', error);
     return null;

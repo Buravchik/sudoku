@@ -46,12 +46,14 @@ export interface StoredMatch {
   entries: MatchEntry[];
   present?: MatchPresence[];
   leader?: MatchLeader;
+  settings?: GameSettingsType;
 }
 
 export interface MatchView {
   difficulty: SudokuGuruDifficulty;
   level: number;
   leader: { name: string; seconds: number; total: number; samples: PaceSample[] } | null;
+  settings: GameSettingsType | null;
 }
 
 interface MatchFile {
@@ -73,6 +75,7 @@ export function toMatchView(match: StoredMatch, userId: number): MatchView {
     leader: leader
       ? { name: leader.name, seconds: leader.seconds, total: leader.total, samples: leader.samples }
       : null,
+    settings: match.settings ?? null,
   };
 }
 
@@ -275,18 +278,14 @@ function addPlayer(
   extras?: { settings?: unknown; forfeit?: boolean },
 ): { match: StoredMatch; changed: boolean } | null {
   if (!match || !fresh(match)) return null;
-  const settings = readSettingsSnapshot(extras?.settings) ?? undefined;
+  const locked = lockChallengeSettings(match, extras?.settings);
   const present = match.present ? [...match.present] : [];
   const existing = present.find(player => player.userId === userId);
   if (existing) {
     existing.name = name;
-    let changed = false;
+    let changed = locked;
     if (extras?.forfeit && !existing.forfeited) {
       existing.forfeited = true;
-      changed = true;
-    }
-    if (!existing.settings && settings) {
-      existing.settings = settings;
       changed = true;
     }
     match.present = present;
@@ -296,10 +295,20 @@ function addPlayer(
     userId,
     name,
     startedAt: Date.now(),
-    ...(settings ? { settings } : {}),
     ...(extras?.forfeit ? { forfeited: true } : {}),
   }];
   return { match, changed: true };
+}
+
+function lockChallengeSettings(match: StoredMatch, incoming: unknown): boolean {
+  if (match.settings) return false;
+  const earliest = [...(match.present ?? []), ...match.entries]
+    .filter(player => player.settings)
+    .sort((left, right) => (left.startedAt ?? Number.MAX_SAFE_INTEGER) - (right.startedAt ?? Number.MAX_SAFE_INTEGER))[0];
+  const settings = earliest?.settings ?? readSettingsSnapshot(incoming) ?? undefined;
+  if (!settings) return false;
+  match.settings = settings;
+  return true;
 }
 
 async function noteFirestore(

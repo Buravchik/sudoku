@@ -24,10 +24,12 @@ import { Digit, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from '@/sudoku/
 import { createDuel, fetchDuel, forfeitDuel, reportDuelResult } from '@/telegram/duelClient';
 import { fetchMatchState, reportMatchResult } from '@/telegram/matchClient';
 import {
+  canDropInChat,
   hapticImpact,
   hapticSelection,
   hapticSuccess,
   hasDeviceStorage,
+  offerDropInChat,
   publicShareUrl,
   readStartParam,
   setClosingConfirmation,
@@ -57,6 +59,7 @@ export default function GameWrapper() {
   const [settings, setSettings] = useState<GameSettingsType>(() => session.ghost?.settings ?? loadSettings());
   const [storageReady, setStorageReady] = useState(() => !hasDeviceStorage());
   const [homeScreen, setHomeScreen] = useState<'unsupported' | 'unknown' | 'added' | 'missed' | null>(null);
+  const [showDropInChat, setShowDropInChat] = useState(false);
   const [challenge, setChallenge] = useState<DailyChallenge | null>(session.challenge);
   const [ghost, setGhost] = useState<GhostRace | null>(session.ghost);
   const [groupPlace, setGroupPlace] = useState<number | null>(null);
@@ -213,6 +216,10 @@ export default function GameWrapper() {
   }, [gameState]);
 
   useEffect(() => {
+    setShowDropInChat(canDropInChat());
+  }, []);
+
+  useEffect(() => {
     const webApp = telegramWebApp();
     if (!webApp?.checkHomeScreenStatus) return;
     let cancelled = false;
@@ -268,6 +275,7 @@ export default function GameWrapper() {
       const race = await fetchMatchState(settingsRef.current);
       if (cancelled || !race) return;
       setMatchLeader(race.leader);
+      if (race.settings && !sameSettings(settingsRef.current, race.settings)) setSettings(race.settings);
     };
     void send();
     const id = window.setInterval(() => void send(), 3000);
@@ -539,6 +547,10 @@ export default function GameWrapper() {
     }
   };
 
+  const handleDropInChat = () => {
+    offerDropInChat(difficultyState ?? '');
+  };
+
   const handleReset = () => {
     paceRef.current = [];
     forgetMoves();
@@ -632,6 +644,7 @@ export default function GameWrapper() {
       const race = await fetchMatchState(settingsRef.current);
       if (!race) throw new Error('The shared puzzle is unavailable');
       const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
+      if (race.settings) setSettings(race.settings);
       setMatchLeader(race.leader);
       setDifficultyState(race.difficulty);
       setBoard(puzzle);
@@ -786,7 +799,16 @@ export default function GameWrapper() {
                     <ResetIcon />
                   </Pill>
                 )}
+                {showDropInChat && activeBoard && (
+                  <Pill className={styles.iconPill} aria-label={text.dropInChat} onClick={handleDropInChat}>
+                    <SendIcon />
+                  </Pill>
+                )}
               </div>
+            )}
+
+            {showDropInChat && gameState === 'selectDifficulty' && !activeBoard && (
+              <Pill onClick={handleDropInChat}>{text.dropInChat}</Pill>
             )}
 
             {gameState === 'won' && (
@@ -1054,6 +1076,14 @@ function UndoIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor" d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
     </svg>
   );
 }

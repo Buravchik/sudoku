@@ -40,12 +40,20 @@ bot.start(async (ctx) => {
     url.searchParams.set('match', openedMatch ? `i${openedMatch}` : `d${openedDuel}`);
     const difficulty = match?.difficulty ?? duel?.difficulty;
     const title = duel
-      ? `${text.challengeFrom(duel.name, text.difficulties[duel.difficulty])}\n${formatSeconds(duel.seconds)}${typeof duel.score === 'number' ? ` · ${text.score(duel.score)}` : ''}`
-      : difficulty
-        ? text.challengeTitle(text.difficulties[difficulty])
-        : text.welcome;
+      ? renderDuelMessage(duel)
+      : match
+        ? renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings)
+        : difficulty
+          ? text.challengeTitle(text.difficulties[difficulty])
+          : text.welcome;
     await ctx.reply(title, {
-      reply_markup: { inline_keyboard: [[{ text: duel ? text.beatRecord : text.play, web_app: { url: url.toString() } }]] },
+      link_preview_options: { is_disabled: true },
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: duel ? text.beatRecord : text.play, web_app: { url: url.toString() } }],
+          [{ text: text.dropInChat, switch_inline_query: difficulty ?? '' }],
+        ],
+      },
     });
     return;
   }
@@ -449,7 +457,7 @@ async function editInlineMatch(match: StoredMatch): Promise<void> {
     undefined,
     undefined,
     match.inlineMessageId,
-    renderMatch(match.lang, match.difficulty, match.entries, match.present ?? []),
+    renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings),
     {
       reply_markup: {
         inline_keyboard: [[{
@@ -484,7 +492,7 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
     const view = toMatchView(match, signed.userId);
-    sendJson(res, 200, { ok: true, difficulty: view.difficulty, level: view.level, leader: view.leader });
+    sendJson(res, 200, { ok: true, difficulty: view.difficulty, level: view.level, leader: view.leader, settings: view.settings });
   } catch (error) {
     console.error('Failed to read an inline match.', error);
     sendJson(res, 500, { ok: false });

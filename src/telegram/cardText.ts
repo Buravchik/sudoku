@@ -36,16 +36,19 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
 export function renderMatch(
   lang: ReturnType<typeof cardLang>,
   difficulty: SudokuGuruDifficulty,
-  entries: { name: string; seconds: number; startedAt?: number; settings?: GameSettingsType }[],
-  playing: { name: string; startedAt?: number; settings?: GameSettingsType }[] = [],
+  entries: { name: string; seconds: number; startedAt?: number }[],
+  playing: { name: string; startedAt?: number }[] = [],
+  settings?: GameSettingsType,
 ): string {
   const text = messages(lang);
-  const lines = [`Sudoku · ${text.difficulties[difficulty]}`, ''];
+  const lines = [`Sudoku · ${text.difficulties[difficulty]}`];
+  if (settings) lines.push(text.settingsNamed(settingsNickname(settings, cardLang(lang))));
+  lines.push('');
   if (playing.length > 0) {
     lines.push(text.joined);
     playing.slice(0, 10).forEach(player => {
       const when = player.startedAt ? ` — ${formatJoined(player.startedAt)}` : '';
-      lines.push(`• ${player.name}${when}${settingsLabel(player.settings, lang)}`);
+      lines.push(`• ${player.name}${when}`);
     });
     lines.push('');
   }
@@ -53,7 +56,7 @@ export function renderMatch(
   else {
     entries.slice(0, 10).forEach((entry, index) => {
       const started = entry.startedAt ? `${formatJoined(entry.startedAt)} · ` : '';
-      lines.push(`${index + 1}. ${entry.name} — ${started}${formatSeconds(entry.seconds)}${settingsLabel(entry.settings, lang)}`);
+      lines.push(`${index + 1}. ${entry.name} — ${started}${formatSeconds(entry.seconds)}`);
     });
     if (entries.length > 10) lines.push(text.more(entries.length - 10));
   }

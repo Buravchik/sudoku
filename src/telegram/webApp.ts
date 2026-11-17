@@ -43,6 +43,7 @@ export interface TelegramWebApp {
   checkHomeScreenStatus?: (callback?: StatusCallback) => void;
   openTelegramLink?: (url: string) => void;
   shareMessage?: (messageId: string, callback?: (sent: boolean) => void) => void;
+  switchInlineQuery?: (query: string, chooseChatTypes?: Array<'users' | 'bots' | 'groups' | 'channels'>) => void;
   HapticFeedback?: {
     impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void;
     notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
@@ -202,6 +203,16 @@ export function sharePreparedMessage(messageId: string): Promise<boolean> {
       finish(false);
     }
   });
+}
+
+export function canDropInChat(): boolean {
+  const webApp = telegramWebApp();
+  if (!webApp?.switchInlineQuery) return false;
+  return webApp.isVersionAtLeast?.('6.7') ?? true;
+}
+
+export function offerDropInChat(query: string): void {
+  telegramWebApp()?.switchInlineQuery?.(query, ['users', 'groups']);
 }
 
 export function shareInTelegram(text: string, url: string): boolean {
