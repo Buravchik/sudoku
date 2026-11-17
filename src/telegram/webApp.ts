@@ -29,6 +29,8 @@ export interface TelegramWebApp {
   themeParams: ThemeParams;
   safeAreaInset?: SafeAreaInset;
   contentSafeAreaInset?: SafeAreaInset;
+  viewportHeight?: number;
+  viewportStableHeight?: number;
   isVersionAtLeast?: (version: string) => boolean;
   ready: () => void;
   expand: () => void;
@@ -305,6 +307,14 @@ export function applySafeArea(): void {
   for (const edge of ['top', 'bottom', 'left', 'right'] as const) {
     const total = insetEdge(webApp.safeAreaInset, edge) + insetEdge(webApp.contentSafeAreaInset, edge);
     root.style.setProperty(`--tg-safe-${edge}`, `${total}px`);
+  }
+  const stable = webApp.viewportStableHeight;
+  const current = webApp.viewportHeight;
+  if (typeof stable === 'number' && stable > 0) {
+    root.style.setProperty('--tg-viewport-stable-height', `${Math.round(stable)}px`);
+  }
+  if (typeof current === 'number' && current > 0) {
+    root.style.setProperty('--tg-viewport-height', `${Math.round(current)}px`);
   }
 }
 

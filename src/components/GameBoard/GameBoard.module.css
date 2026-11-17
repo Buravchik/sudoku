@@ -1,14 +1,21 @@
 .gameBoard {
   width: 100%;
-  margin: 16px auto 0;
+  aspect-ratio: 1;
+  margin: 0;
+}
+
+@supports (width: min(1cqw, 1cqh)) {
+  .gameBoard {
+    width: min(100cqw, 100cqh);
+  }
 }
 
 .boardGrid {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
   grid-template-rows: repeat(9, minmax(0, 1fr));
-  aspect-ratio: 1;
   width: 100%;
+  height: 100%;
   border: 2px solid var(--grid-border);
   background-color: var(--cell-bg);
   box-sizing: border-box;

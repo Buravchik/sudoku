@@ -10,10 +10,18 @@
   padding-right: calc(16px + var(--safe-right));
   padding-bottom: calc(16px + var(--safe-bottom));
   padding-left: calc(16px + var(--safe-left));
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
   box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.gameWrapper > * {
+  flex-shrink: 0;
 }
 
 .gameHeader {
@@ -163,12 +171,15 @@
   to { transform: scale(1); }
 }
 
-/* Add styles for the game board container */
-.gameBoard {
+/* The board takes the room left under the buttons and shrinks to stay inside the window. */
+.gameWrapper > .gameBoard {
+  flex: 1 1 0;
+  min-height: 0;
   width: 100%;
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
+  container-type: size;
 }
 
 .notice,
