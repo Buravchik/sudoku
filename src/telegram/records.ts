@@ -43,6 +43,12 @@ export interface LivePlayer {
   samples?: PaceSample[];
 }
 
+export interface CardJoiner {
+  userId: number;
+  name: string;
+  joinedAt: number;
+}
+
 export interface RacePlayer {
   name: string;
   left: number;
@@ -63,6 +69,14 @@ export interface RaceView {
   rival: LiveRival | null;
 }
 
+export interface ProgressUpdate {
+  view: RaceView;
+  chatId: number;
+  card: ChallengeCard;
+  record: ChatRecord | null;
+  joined: boolean;
+}
+
 export interface ChallengeCard {
   id: string;
   day: string;
@@ -72,6 +86,7 @@ export interface ChallengeCard {
   lang?: Lang;
   leader?: LeaderPace;
   live?: LivePlayer[];
+  joined?: CardJoiner[];
 }
 
 interface ChatState {
@@ -181,7 +196,7 @@ export function touchProgress(
   left: number,
   total: number,
   pace?: { seconds: number; samples: unknown },
-): RaceView | null {
+): ProgressUpdate | null {
   if (!Number.isInteger(left) || !Number.isInteger(total) || total < 1 || total > 81 || left < 0 || left > total) {
     return null;
   }
@@ -191,6 +206,11 @@ export function touchProgress(
   if (card.day !== challenge.day || card.difficulty !== challenge.difficulty) return null;
 
   const now = Date.now();
+  card.joined ??= [];
+  const known = card.joined.find(player => player.userId === userId);
+  const joined = !known;
+  if (known) known.name = name;
+  else card.joined.push({ userId, name, joinedAt: now });
   card.live ??= [];
   const existing = card.live.find(item => item.userId === userId);
   const seconds = pace && Number.isInteger(pace.seconds) && pace.seconds >= 0 && pace.seconds <= MAX_SECONDS
@@ -220,11 +240,17 @@ export function touchProgress(
       || leftPlayer.name.localeCompare(rightPlayer.name)
     ));
   return {
-    leader: leader
-      ? { name: leader.name, seconds: leader.seconds, total: leader.total, samples: leader.samples }
-      : null,
-    players,
-    rival: pickLiveRival(card.live, userId, seconds),
+    view: {
+      leader: leader
+        ? { name: leader.name, seconds: leader.seconds, total: leader.total, samples: leader.samples }
+        : null,
+      players,
+      rival: pickLiveRival(card.live, userId, seconds),
+    },
+    chatId: located.chatId,
+    card,
+    record: located.chat.records[card.difficulty] ?? null,
+    joined,
   };
 }
 

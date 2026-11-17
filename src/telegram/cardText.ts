@@ -9,6 +9,15 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
     `Sudoku · ${text.difficulties[card.difficulty]} · ${formatDay(card.day, text.months)}`,
     '',
   ];
+  const joined = card.joined ?? [];
+  if (joined.length > 0) {
+    lines.push(text.joined);
+    joined.slice(0, 10).forEach(player => {
+      lines.push(`• ${player.name} — ${formatJoined(player.joinedAt)}`);
+    });
+    if (joined.length > 10) lines.push(text.more(joined.length - 10));
+    lines.push('');
+  }
   if (card.entries.length === 0) lines.push(text.nobody);
   else {
     card.entries.slice(0, 10).forEach((entry, index) => {
@@ -26,13 +35,16 @@ export function renderMatch(
   lang: ReturnType<typeof cardLang>,
   difficulty: SudokuGuruDifficulty,
   entries: { name: string; seconds: number }[],
-  playing: { name: string }[] = [],
+  playing: { name: string; startedAt?: number }[] = [],
 ): string {
   const text = messages(lang);
   const lines = [`Sudoku · ${text.difficulties[difficulty]}`, ''];
   if (playing.length > 0) {
-    lines.push(text.playing);
-    playing.slice(0, 10).forEach(player => lines.push(`• ${player.name}`));
+    lines.push(text.joined);
+    playing.slice(0, 10).forEach(player => {
+      const when = player.startedAt ? ` — ${formatJoined(player.startedAt)}` : '';
+      lines.push(`• ${player.name}${when}`);
+    });
     lines.push('');
   }
   if (entries.length === 0) lines.push(text.nobody);
@@ -55,6 +67,13 @@ export function playLink(username: string, shortName: string | undefined, card: 
     ? `https://t.me/${username}/${shortName}`
     : `https://t.me/${username}`;
   return `${base}?startapp=${startParam}`;
+}
+
+export function formatJoined(epochMs: number): string {
+  const date = new Date(epochMs);
+  const hours = date.getUTCHours().toString().padStart(2, '0');
+  const minutes = date.getUTCMinutes().toString().padStart(2, '0');
+  return `${hours}:${minutes} UTC`;
 }
 
 export function formatSeconds(totalSeconds: number): string {

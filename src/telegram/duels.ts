@@ -14,6 +14,7 @@ export interface DuelGuest {
   userId: number;
   name: string;
   seconds: number | null;
+  joinedAt?: number;
 }
 
 export interface StoredDuel extends GhostRace {
@@ -102,9 +103,10 @@ export async function noteDuelGuest(id: string, userId: number, name: string): P
     const existing = guests.find(guest => guest.userId === userId);
     if (existing) {
       existing.name = guestName;
+      existing.joinedAt ??= Date.now();
       return { ...duel, guests };
     }
-    guests.push({ userId, name: guestName, seconds: null });
+    guests.push({ userId, name: guestName, seconds: null, joinedAt: Date.now() });
     return { ...duel, guests };
   });
 }
@@ -117,9 +119,15 @@ export async function recordDuelResult(id: string, userId: number, name: string,
     const bestSeconds = duel.bestSeconds !== null && seconds >= duel.bestSeconds ? duel.bestSeconds : seconds;
     if (duel.userId === userId) return { ...duel, bestSeconds };
     const guests = (duel.guests ?? []).filter(guest => guest.userId !== userId);
-    const previous = duel.guests?.find(guest => guest.userId === userId)?.seconds ?? null;
+    const previousGuest = duel.guests?.find(guest => guest.userId === userId);
+    const previous = previousGuest?.seconds ?? null;
     const guestSeconds = previous !== null && previous <= seconds ? previous : seconds;
-    guests.push({ userId, name: guestName, seconds: guestSeconds });
+    guests.push({
+      userId,
+      name: guestName,
+      seconds: guestSeconds,
+      joinedAt: previousGuest?.joinedAt ?? Date.now(),
+    });
     return { ...duel, bestSeconds, guests };
   });
 }

@@ -8,11 +8,11 @@ import { parseMatchId } from '@/sudoku/match';
 import { settingsNickname } from '@/sudoku/nicknames';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
-import { playLink, renderCard, renderMatch, formatSeconds } from './cardText';
+import { playLink, renderCard, renderMatch, formatJoined, formatSeconds } from './cardText';
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
-import { acceptDuel, bindDuelMessage, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
+import { acceptDuel, bindDuelMessage, DuelGuest, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
 import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, StoredMatch, toMatchView } from './matches';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
@@ -348,7 +348,7 @@ async function handleProgress(req: http.IncomingMessage, res: http.ServerRespons
     }
     const left = typeof body.left === 'number' ? body.left : -1;
     const total = typeof body.total === 'number' ? body.total : -1;
-    const view = await withRecords(file => touchProgress(
+    const update = await withRecords(file => touchProgress(
       file,
       challenge,
       signed.userId,
@@ -357,11 +357,12 @@ async function handleProgress(req: http.IncomingMessage, res: http.ServerRespons
       total,
       { seconds: typeof body.seconds === 'number' ? Math.floor(body.seconds) : 0, samples: body.samples },
     ));
-    if (!view) {
+    if (!update) {
       sendJson(res, 400, { ok: false });
       return;
     }
-    sendJson(res, 200, { ok: true, leader: view.leader, players: view.players, rival: view.rival });
+    if (update.joined) await editCard(update.chatId, update.card, update.record);
+    sendJson(res, 200, { ok: true, leader: update.view.leader, players: update.view.players, rival: update.view.rival });
   } catch (error) {
     console.error('Failed to update the live race.', error);
     sendJson(res, 500, { ok: false });
@@ -649,6 +650,14 @@ async function openDuelFromMessage(ctx: {
   }
 }
 
+function guestLine(guest: DuelGuest, bullet: boolean): string {
+  const when = typeof guest.joinedAt === 'number' ? formatJoined(guest.joinedAt) : '';
+  const result = guest.seconds === null ? '' : formatSeconds(guest.seconds);
+  const time = [when, result].filter(Boolean).join(' · ');
+  const text = time ? `${guest.name} — ${time}` : guest.name;
+  return bullet ? `• ${text}` : text;
+}
+
 function renderDuelMessage(duel: StoredDuel): string {
   const copy = messages(cardLang(duel.lang));
   const lines = [
@@ -663,15 +672,15 @@ function renderDuelMessage(duel: StoredDuel): string {
   const playing = (duel.guests ?? []).filter(guest => guest.seconds === null);
   const finished = (duel.guests ?? []).filter(guest => guest.seconds !== null);
   if (playing.length > 0) {
-    lines.push('', copy.playing);
-    playing.slice(0, 10).forEach(guest => lines.push(`• ${guest.name}`));
+    lines.push('', copy.joined);
+    playing.slice(0, 10).forEach(guest => lines.push(guestLine(guest, true)));
   }
   if (finished.length > 0) lines.push('');
   finished
     .slice()
     .sort((left, right) => (left.seconds ?? 0) - (right.seconds ?? 0))
     .slice(0, 10)
-    .forEach(guest => lines.push(`${guest.name} — ${formatSeconds(guest.seconds ?? 0)}`));
+    .forEach(guest => lines.push(guestLine(guest, false)));
   return lines.join('\n');
 }
 
