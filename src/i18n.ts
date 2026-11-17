@@ -89,7 +89,7 @@ export interface Copy {
 const copy: Record<Lang, Copy> = {
   en: {
     gameTitle: difficulty => difficulty ? `Game - ${difficulty}` : 'Game',
-    timeTitle: time => ` - Time: ${time}`,
+    timeTitle: time => `Time ${time}`,
     settings: 'Settings',
     close: 'Close',
     newGame: 'New Game',
@@ -186,7 +186,7 @@ const copy: Record<Lang, Copy> = {
   },
   ru: {
     gameTitle: difficulty => difficulty ? `Игра — ${difficulty}` : 'Игра',
-    timeTitle: time => ` — время: ${time}`,
+    timeTitle: time => `Время ${time}`,
     settings: 'Настройки',
     close: 'Закрыть',
     newGame: 'Новая игра',

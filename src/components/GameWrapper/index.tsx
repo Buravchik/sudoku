@@ -690,15 +690,20 @@ export default function GameWrapper() {
           <span className={styles.difficulty}>
             {text.gameTitle(difficultyName)}
           </span>
-          <span className={styles.timer}>
-            {text.timeTitle(formatTime(time))}
+          <span className={styles.timer} aria-label={text.timeTitle(formatTime(time))}>
+            <ClockIcon />
+            <span aria-hidden="true">{formatTime(time)}</span>
           </span>
           {settings.countMistakes && activeBoard && (
-            <span className={styles.mistakes}>{text.mistakes(mistakes)}</span>
+            <span className={styles.mistakes} aria-label={text.mistakes(mistakes)}>
+              <AlertIcon />
+              <span aria-hidden="true">{mistakes}</span>
+            </span>
           )}
           {activeBoard && (
-            <span className={styles.score}>
-              {text.score(shownTotal(marks))}
+            <span className={styles.score} aria-label={text.score(shownTotal(marks))}>
+              <StarIcon />
+              <span aria-hidden="true">{shownTotal(marks)}</span>
               {award && (
                 <span key={award.key} className={styles.scorePop} aria-hidden="true">+{award.stake}</span>
               )}
@@ -1041,6 +1046,30 @@ function raceResult(text: Copy, opponent: { name: string; seconds: number }, tim
   if (time < opponent.seconds) return text.aheadOf(opponent.name, delta);
   if (time > opponent.seconds) return text.slower(opponent.name, delta);
   return text.tied(opponent.name);
+}
+
+function ClockIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.75-13h-1.5v6.1l4.7 2.8.75-1.25-3.95-2.35V7z" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2zm-1 5h2v8h-2V7zm0 10h2v2h-2v-2z" />
+    </svg>
+  );
+}
+
+function StarIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M12 2.6l2.47 5.9 6.43.55-4.9 4.2 1.5 6.25L12 16.4l-5.5 3.1 1.5-6.25-4.9-4.2 6.43-.55L12 2.6z" />
+    </svg>
+  );
 }
 
 function formatTime(totalSeconds: number): string {

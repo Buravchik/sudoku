@@ -54,21 +54,28 @@
   min-width: 0;
 }
 
-.timer {
+.timer,
+.mistakes,
+.score {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
   white-space: nowrap;
 }
 
+.timer svg,
+.mistakes svg,
+.score svg {
+  display: block;
+}
+
 .mistakes {
-  flex-shrink: 0;
-  white-space: nowrap;
   color: var(--error);
 }
 
 .score {
   position: relative;
-  flex-shrink: 0;
-  white-space: nowrap;
 }
 
 .scorePop {
