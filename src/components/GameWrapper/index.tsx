@@ -55,6 +55,7 @@ export default function GameWrapper() {
   const [difficultyState, setDifficultyState] = useState(session.difficultyState);
   const [board, setBoard] = useState<LoadedPuzzle | null>(session.board);
   const [isLoading, setIsLoading] = useState(false);
+  const [openFailed, setOpenFailed] = useState(false);
   const [time, setTime] = useState(session.elapsedSeconds);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<GameSettingsType>(() => session.ghost?.settings ?? loadSettings());
@@ -466,6 +467,7 @@ export default function GameWrapper() {
     clearStoredSession();
     paceRef.current = [];
     pencilUsedRef.current = false;
+    setOpenFailed(false);
     forgetMoves();
     setChallenge(null);
     setGhost(null);
@@ -593,12 +595,17 @@ export default function GameWrapper() {
     setGameState('playing');
   };
 
-  const startChallenge = async (launch: DailyChallenge) => {
-    setIsLoading(true);
+  const missLaunch = () => {
+    if (boardRef.current) setOpenFailed(true);
+    else setGameState('error');
+  };
+
+  const replaceGame = () => {
     paceRef.current = [];
     pencilUsedRef.current = false;
     forgetMoves();
-    setChallenge(launch);
+    setOpenFailed(false);
+    setChallenge(null);
     setGhost(null);
     setGroupLeader(null);
     setGroupPlayers([]);
@@ -606,21 +613,24 @@ export default function GameWrapper() {
     setMatchId(null);
     setMatchLeader(null);
     setMatchPlayers([]);
-    setSettings(loadSettings());
-    setDifficultyState(launch.difficulty);
     setGroupPlace(null);
-    setBoard(null);
-    setGameState('notStarted');
     setTime(0);
     clearStoredSession();
+  };
+
+  const startChallenge = async (launch: DailyChallenge) => {
+    setIsLoading(true);
+    setOpenFailed(false);
     try {
       const puzzle = await loadDailyPuzzle(launch.difficulty, launch.day);
+      replaceGame();
+      setChallenge(launch);
+      setSettings(loadSettings());
+      setDifficultyState(launch.difficulty);
       setBoard(puzzle);
       setGameState('playing');
-    } catch (error) {
-      console.error('Failed to open the chat puzzle:', error);
-      setBoard(null);
-      setGameState('error');
+    } catch {
+      missLaunch();
     } finally {
       setIsLoading(false);
     }
@@ -628,35 +638,22 @@ export default function GameWrapper() {
 
   const startDuel = async (id: string) => {
     setIsLoading(true);
-    paceRef.current = [];
-    pencilUsedRef.current = false;
-    forgetMoves();
-    setChallenge(null);
-    setGhost(null);
-    setGroupLeader(null);
-    setGroupPlayers([]);
-    setLiveRival(null);
-    setMatchId(null);
-    setMatchLeader(null);
-    setMatchPlayers([]);
-    setGroupPlace(null);
-    setBoard(null);
-    setGameState('notStarted');
-    setTime(0);
-    clearStoredSession();
+    setOpenFailed(false);
     try {
       const race = await fetchDuel(id);
-      if (!race) throw new Error('The challenge is unavailable');
+      if (!race) {
+        missLaunch();
+        return;
+      }
       const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
+      replaceGame();
       setGhost(race);
       setSettings(race.settings);
       setDifficultyState(race.difficulty);
       setBoard(puzzle);
       setGameState('playing');
-    } catch (error) {
-      console.error('Failed to open the challenge:', error);
-      setBoard(null);
-      setGameState('error');
+    } catch {
+      missLaunch();
     } finally {
       setIsLoading(false);
     }
@@ -664,37 +661,23 @@ export default function GameWrapper() {
 
   const startMatch = async (id: string) => {
     setIsLoading(true);
-    paceRef.current = [];
-    pencilUsedRef.current = false;
-    forgetMoves();
-    setChallenge(null);
-    setGhost(null);
-    setGroupLeader(null);
-    setGroupPlayers([]);
-    setLiveRival(null);
-    setMatchId(id);
-    setMatchLeader(null);
-    setMatchPlayers([]);
-    setGroupPlace(null);
-    setSettings(loadSettings());
-    setBoard(null);
-    setGameState('notStarted');
-    setTime(0);
-    clearStoredSession();
+    setOpenFailed(false);
     try {
       const race = await fetchMatchState({ settings: settingsRef.current });
-      if (!race) throw new Error('The shared puzzle is unavailable');
+      if (!race) {
+        missLaunch();
+        return;
+      }
       const puzzle = await loadLevelPuzzle(race.difficulty, race.level);
+      replaceGame();
+      setMatchId(id);
       if (race.settings) setSettings(race.settings);
       setMatchLeader(race.leader);
       setDifficultyState(race.difficulty);
       setBoard(puzzle);
       setGameState('playing');
-    } catch (error) {
-      console.error('Failed to open the shared puzzle:', error);
-      setMatchId(null);
-      setBoard(null);
-      setGameState('error');
+    } catch {
+      missLaunch();
     } finally {
       setIsLoading(false);
     }
@@ -702,6 +685,7 @@ export default function GameWrapper() {
 
   const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
     setIsLoading(true);
+    setOpenFailed(false);
     paceRef.current = [];
     pencilUsedRef.current = false;
     forgetMoves();
@@ -814,6 +798,9 @@ export default function GameWrapper() {
       {activeBoard?.source === 'offline' && (
         <p className={styles.notice}>{text.offline}</p>
       )}
+      {openFailed && activeBoard && (
+        <p className={styles.notice}>{text.loadFailed}</p>
+      )}
       {gameState === 'won' && (
         <p className={styles.winBanner}>
           {text.solved(formatTime(time))}
@@ -878,21 +865,21 @@ export default function GameWrapper() {
               ))
             )}
 
-            {gameState === 'error' && (
-              <>
-                <p className={styles.errorText}>{text.loadFailed}</p>
-                <Pill
-                  onClick={() => {
-                    if (difficultyState) void handleStartGame(difficultyState);
-                  }}
-                  disabled={!difficultyState}
-                >
-                  {text.tryAgain}
-                </Pill>
-              </>
-            )}
           </div>
 
+          {gameState === 'error' && (
+            <div className={`${styles.gameBoard} ${styles.gameBoardNote}`}>
+              <p className={styles.errorText}>{text.loadFailed}</p>
+              <Pill
+                onClick={() => {
+                  if (difficultyState) void handleStartGame(difficultyState);
+                }}
+                disabled={!difficultyState}
+              >
+                {text.tryAgain}
+              </Pill>
+            </div>
+          )}
           {activeBoard && (
             <div className={styles.gameBoard}>
               <GameBoard

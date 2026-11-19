@@ -230,6 +230,13 @@
   container-type: size;
 }
 
+.gameBoardNote {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
 .notice,
 .errorText {
   margin: 0;
