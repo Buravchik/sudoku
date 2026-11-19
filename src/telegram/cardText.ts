@@ -5,7 +5,7 @@ import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
 import { ChallengeCard, ChatRecord } from './records';
 
-export function renderCard(card: ChallengeCard, record: ChatRecord | null): string {
+export function renderCard(card: ChallengeCard, record: ChatRecord | null, marks: ReadonlyMap<number, string> = new Map()): string {
   const text = messages(cardLang(card.lang));
   const lines = [
     `Sudoku · ${text.difficulties[card.difficulty]} · ${formatDay(card.day, text.months)}`,
@@ -15,7 +15,7 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
   if (joined.length > 0) {
     lines.push(text.joined);
     joined.slice(0, 10).forEach(player => {
-      lines.push(`• ${player.name} — ${formatJoined(player.joinedAt)}${settingsLabel(player.settings, card.lang)}`);
+      lines.push(`• ${tagged(player.name, player.userId, marks)} — ${formatJoined(player.joinedAt)}${settingsLabel(player.settings, card.lang)}`);
     });
     if (joined.length > 10) lines.push(text.more(joined.length - 10));
     lines.push('');
@@ -23,7 +23,7 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
   if (card.entries.length === 0) lines.push(text.nobody);
   else {
     card.entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`✓ ${index + 1}. ${entry.name} — ${formatSeconds(entry.seconds)}`);
+      lines.push(`✓ ${index + 1}. ${tagged(entry.name, entry.userId, marks)} — ${formatSeconds(entry.seconds)}`);
     });
     if (card.entries.length > 10) lines.push(text.more(card.entries.length - 10));
   }
@@ -36,9 +36,10 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null): stri
 export function renderMatch(
   lang: ReturnType<typeof cardLang>,
   difficulty: SudokuGuruDifficulty,
-  entries: { name: string; seconds: number; startedAt?: number }[],
-  playing: { name: string; startedAt?: number }[] = [],
+  entries: { userId?: number; name: string; seconds: number; startedAt?: number }[],
+  playing: { userId?: number; name: string; startedAt?: number }[] = [],
   settings?: GameSettingsType,
+  marks: ReadonlyMap<number, string> = new Map(),
 ): string {
   const text = messages(lang);
   const lines = [`Sudoku · ${text.difficulties[difficulty]}`];
@@ -48,14 +49,14 @@ export function renderMatch(
     lines.push(text.joined);
     playing.slice(0, 10).forEach(player => {
       const when = player.startedAt ? ` — ${formatJoined(player.startedAt)}` : '';
-      lines.push(`• ${player.name}${when}`);
+      lines.push(`• ${tagged(player.name, player.userId, marks)}${when}`);
     });
     lines.push('');
   }
   if (entries.length === 0) lines.push(text.nobody);
   else {
     entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`✓ ${index + 1}. ${entry.name} — ${formatSeconds(entry.seconds)}`);
+      lines.push(`✓ ${index + 1}. ${tagged(entry.name, entry.userId, marks)} — ${formatSeconds(entry.seconds)}`);
     });
     if (entries.length > 10) lines.push(text.more(entries.length - 10));
   }
@@ -89,6 +90,11 @@ export function formatSeconds(totalSeconds: number): string {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function tagged(name: string, userId: number | undefined, marks: ReadonlyMap<number, string>): string {
+  if (userId === undefined) return name;
+  return `${marks.get(userId) ?? ''}${name}`;
 }
 
 function settingsLabel(settings: GameSettingsType | undefined, lang: string | undefined): string {

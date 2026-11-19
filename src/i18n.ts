@@ -1,3 +1,4 @@
+import { AchievementId } from '@/sudoku/achievements';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
 
@@ -84,6 +85,12 @@ export interface Copy {
   cmdStart: string;
   cmdSudoku: string;
   cmdTop: string;
+  achievements: string;
+  achievementsHint: string;
+  achievementNames: Record<AchievementId, string>;
+  achievementRules: Record<AchievementId, string>;
+  showOnCard: string;
+  onCard: string;
 }
 
 const copy: Record<Lang, Copy> = {
@@ -183,6 +190,28 @@ const copy: Record<Lang, Copy> = {
     cmdStart: 'Play Sudoku',
     cmdSudoku: 'Today’s puzzle and chat records',
     cmdTop: 'Today’s chat records',
+    achievements: 'Achievements',
+    achievementsHint: 'Until you pick two, the card shows your best Blind medal.',
+    achievementNames: {
+      tomorrow: 'Tomorrow',
+      table: 'Your table',
+      first: 'First in the chat',
+      blind: 'Blind',
+      pencil: 'No pencil',
+      streak: 'Three days',
+      reply: 'Reply',
+    },
+    achievementRules: {
+      tomorrow: 'Win on two different UTC days.',
+      table: 'Three different people start your challenges.',
+      first: 'Be the first to finish the chat’s daily puzzle.',
+      blind: 'Win with every checkbox off. Easy does not count.',
+      pencil: 'Do that on hard or above, with no pencil mark in the game.',
+      streak: 'A bare win on three UTC days in a row.',
+      reply: 'Beat the author of a challenge whose checkboxes are all off.',
+    },
+    showOnCard: 'Show on card',
+    onCard: 'On the card',
   },
   ru: {
     gameTitle: difficulty => difficulty ? `Игра — ${difficulty}` : 'Игра',
@@ -280,6 +309,28 @@ const copy: Record<Lang, Copy> = {
     cmdStart: 'Играть в судоку',
     cmdSudoku: 'Сегодняшняя сетка и рекорды чата',
     cmdTop: 'Рекорды чата за сегодня',
+    achievements: 'Ачивки',
+    achievementsHint: 'Пока не выберешь два значка, на карточке стоит лучшее «Вслепую».',
+    achievementNames: {
+      tomorrow: 'Завтра',
+      table: 'Свой стол',
+      first: 'Первый в чате',
+      blind: 'Вслепую',
+      pencil: 'Без карандаша',
+      streak: 'Три дня',
+      reply: 'Ответка',
+    },
+    achievementRules: {
+      tomorrow: 'Победы в два разных дня по UTC.',
+      table: 'Три разных человека начали твои челленджи.',
+      first: 'Первым закончить дневную сетку чата.',
+      blind: 'Победа со всеми выключенными галочками. Лёгкая не считается.',
+      pencil: 'То же на сложной или выше и без единой карандашной пометки.',
+      streak: 'Голая победа три дня UTC подряд.',
+      reply: 'Побить автора челленджа, у которого все галочки выключены.',
+    },
+    showOnCard: 'На карточку',
+    onCard: 'На карточке',
   },
 };
 

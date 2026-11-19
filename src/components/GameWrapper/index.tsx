@@ -22,6 +22,7 @@ import {
 } from '@/sudoku/storage';
 import { Digit, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from '@/sudoku/types';
 import { createDuel, fetchDuel, forfeitDuel, reportDuelResult } from '@/telegram/duelClient';
+import { reportAchievement } from '@/telegram/achievementClient';
 import { fetchMatchState, reportMatchResult } from '@/telegram/matchClient';
 import {
   canDropInChat,
@@ -89,6 +90,7 @@ export default function GameWrapper() {
   const ghostRef = useRef(ghost);
   const matchIdRef = useRef(matchId);
   const paceRef = useRef<PaceSample[]>(session.pace);
+  const pencilUsedRef = useRef(session.board?.cells.some(cell => cell.draftValues.some(Boolean)) ?? false);
   const historyRef = useRef<PlayedMove[]>([]);
   const mistakesRef = useRef(mistakes);
   const marksRef = useRef(marks);
@@ -212,6 +214,16 @@ export default function GameWrapper() {
         void reportMatchResult(timeRef.current, samples, cellsToFill(finishedBoard.cells));
       }
       if (ghostRef.current) void reportDuelResult(ghostRef.current.id, timeRef.current);
+      const finished = boardRef.current;
+      const difficulty = difficultyRef.current || finished?.difficulty;
+      if (finished && difficulty) {
+        void reportAchievement({
+          difficulty,
+          settings: settingsRef.current,
+          pencilUsed: pencilUsedRef.current,
+          seconds: Math.floor(timeRef.current),
+        });
+      }
     }
     previousStateRef.current = gameState;
   }, [gameState]);
@@ -453,6 +465,7 @@ export default function GameWrapper() {
   const beginNewGame = () => {
     clearStoredSession();
     paceRef.current = [];
+    pencilUsedRef.current = false;
     forgetMoves();
     setChallenge(null);
     setGhost(null);
@@ -484,6 +497,15 @@ export default function GameWrapper() {
   };
 
   const handleCellHintToggle = (index: number, hint: number) => {
+    const cell = boardRef.current?.cells[index];
+    if (
+      cell
+      && cell.initialValue === 0
+      && cell.userValue === 0
+      && hint >= 1
+      && hint <= 9
+      && !cell.draftValues[hint - 1]
+    ) pencilUsedRef.current = true;
     hapticSelection();
     applyCell(index, cell => toggleHint(cell, hint), false, false);
   };
@@ -574,6 +596,7 @@ export default function GameWrapper() {
   const startChallenge = async (launch: DailyChallenge) => {
     setIsLoading(true);
     paceRef.current = [];
+    pencilUsedRef.current = false;
     forgetMoves();
     setChallenge(launch);
     setGhost(null);
@@ -606,6 +629,7 @@ export default function GameWrapper() {
   const startDuel = async (id: string) => {
     setIsLoading(true);
     paceRef.current = [];
+    pencilUsedRef.current = false;
     forgetMoves();
     setChallenge(null);
     setGhost(null);
@@ -641,6 +665,7 @@ export default function GameWrapper() {
   const startMatch = async (id: string) => {
     setIsLoading(true);
     paceRef.current = [];
+    pencilUsedRef.current = false;
     forgetMoves();
     setChallenge(null);
     setGhost(null);
@@ -678,6 +703,7 @@ export default function GameWrapper() {
   const handleStartGame = async (difficulty: SudokuGuruDifficulty) => {
     setIsLoading(true);
     paceRef.current = [];
+    pencilUsedRef.current = false;
     forgetMoves();
     setChallenge(null);
     setGhost(null);

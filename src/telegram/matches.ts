@@ -52,6 +52,7 @@ export interface StoredMatch {
   leader?: MatchLeader;
   settings?: GameSettingsType;
   notices?: MatchNotice[];
+  hostId?: number;
 }
 
 export interface MatchNotice {
@@ -212,7 +213,7 @@ export async function noteMatchPlayer(
   userId: number,
   name: string,
   extras?: { settings?: unknown; forfeit?: boolean; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
-): Promise<{ match: StoredMatch; changed: boolean; refreshCard: boolean } | null> {
+): Promise<{ match: StoredMatch; changed: boolean; refreshCard: boolean; freshStart?: boolean } | null> {
   const clean = name.replace(/\s+/g, ' ').trim().slice(0, 32);
   if (!/^[a-f0-9]{16}$/.test(id) || !clean) return null;
   if (process.env.RECORDS_BACKEND === 'firestore') return noteFirestore(id, userId, clean, extras);
@@ -329,7 +330,7 @@ function addPlayer(
   userId: number,
   name: string,
   extras?: { settings?: unknown; forfeit?: boolean; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
-): { match: StoredMatch; changed: boolean; refreshCard: boolean } | null {
+): { match: StoredMatch; changed: boolean; refreshCard: boolean; freshStart?: boolean } | null {
   if (!match || !fresh(match)) return null;
   const locked = lockChallengeSettings(match, extras?.settings);
   const present = match.present ? [...match.present] : [];
@@ -352,8 +353,9 @@ function addPlayer(
     ...(extras?.forfeit ? { forfeited: true } : {}),
   };
   writeProgress(player, extras);
+  if (!match.hostId) match.hostId = userId;
   match.present = [...present, player];
-  return { match, changed: true, refreshCard: true };
+  return { match, changed: true, refreshCard: true, freshStart: match.hostId !== userId };
 }
 
 function writeProgress(
@@ -423,7 +425,7 @@ async function noteFirestore(
   userId: number,
   name: string,
   extras?: { settings?: unknown; forfeit?: boolean; left?: unknown; total?: unknown; seconds?: unknown; samples?: unknown },
-): Promise<{ match: StoredMatch; changed: boolean; refreshCard: boolean } | null> {
+): Promise<{ match: StoredMatch; changed: boolean; refreshCard: boolean; freshStart?: boolean } | null> {
   const { Firestore } = await import('@google-cloud/firestore');
   const ref = new Firestore().doc(`matches/${id}`);
   return ref.firestore.runTransaction(async transaction => {

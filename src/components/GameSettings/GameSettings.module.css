@@ -72,6 +72,38 @@
   font: inherit;
 }
 
+.pin {
+  border: 0;
+  border-radius: 999px;
+  min-height: 36px;
+  padding: 0 12px;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pin[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.pin:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rule {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 .list {
   display: flex;
   flex-direction: column;

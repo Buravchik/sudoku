@@ -2,7 +2,7 @@ import http from 'http';
 import { Telegraf } from 'telegraf';
 import { version } from '../../package.json';
 import { cardLang, Lang, langFrom, messages } from '@/i18n';
-import { difficultyCode, difficultyFromCode, parseDifficultyArg, parseStartParam } from '@/sudoku/daily';
+import { difficultyCode, difficultyFromCode, parseDifficultyArg, parseStartParam, todayKey } from '@/sudoku/daily';
 import { parseDuelId } from '@/sudoku/duel';
 import { parseMatchId } from '@/sudoku/match';
 import { settingsNickname } from '@/sudoku/nicknames';
@@ -14,6 +14,8 @@ import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
 import { acceptDuel, bindDuelMessage, DuelGuest, forfeitDuelGuest, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
 import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, rememberMatchNotice, StoredMatch, toMatchView } from './matches';
+import { prefixesFor, readPublic, recordStart, recordWin, toggleListedPin, winFactsFromBody } from './players';
+import { bareSettings } from '@/sudoku/achievements';
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
 if (!token) {
@@ -40,9 +42,9 @@ bot.start(async (ctx) => {
     url.searchParams.set('match', openedMatch ? `i${openedMatch}` : `d${openedDuel}`);
     const difficulty = match?.difficulty ?? duel?.difficulty;
     const title = duel
-      ? renderDuelMessage(duel)
+      ? await renderDuelMessage(duel)
       : match
-        ? renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings)
+        ? await matchText(match)
         : difficulty
           ? text.challengeTitle(text.difficulties[difficulty])
           : text.welcome;
@@ -233,7 +235,7 @@ async function publishCard(chatId: number, difficulty: SudokuGuruDifficulty, lan
     const card = findTodayCard(file, chatId, difficulty, lang);
     const record = file.chats[String(chatId)]?.records?.[difficulty] ?? null;
     const extra = cardKeyboard(botUsername, card);
-    const text = renderCard(card, record);
+    const text = await dailyText(card, record);
     if (card.messageId) {
       try {
         await bot.telegram.editMessageText(chatId, card.messageId, undefined, text, extra);
@@ -289,6 +291,10 @@ function startScoreServer(): http.Server {
       await handleDuelRead(path.slice('/duel/'.length), res);
       return;
     }
+    if (req.method === 'POST' && path === '/achievement') {
+      await handleAchievement(req, res);
+      return;
+    }
     if (req.method === 'POST' && path === '/match/state') {
       await handleMatchState(req, res);
       return;
@@ -335,6 +341,9 @@ function startScoreServer(): http.Server {
         return;
       }
       await editCard(update.chatId, update.card, update.record);
+      if (update.place === 1 && update.card.entries.length === 1) {
+        await recordWin(signed.userId, { ...emptyWin(update.card.difficulty), firstInChat: true, seconds: Math.floor(seconds) });
+      }
       sendJson(res, 200, { ok: true, place: update.place, improved: update.improved });
     } catch (error) {
       console.error('Failed to record a score.', error);
@@ -382,11 +391,61 @@ async function handleProgress(req: http.IncomingMessage, res: http.ServerRespons
   }
 }
 
+async function dailyText(card: ChallengeCard, record: { name: string; seconds: number; day: string } | null): Promise<string> {
+  const ids = [...card.entries.map(entry => entry.userId), ...(card.joined ?? []).map(player => player.userId)];
+  return renderCard(card, record, await prefixesFor(ids, cardLang(card.lang)));
+}
+
+async function matchText(match: StoredMatch): Promise<string> {
+  const ids = [...match.entries.map(entry => entry.userId), ...(match.present ?? []).map(player => player.userId)];
+  return renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings, await prefixesFor(ids, cardLang(match.lang)));
+}
+
+async function taggedName(userId: number, name: string, lang: Lang): Promise<string> {
+  const marks = await prefixesFor([userId], lang);
+  return `${marks.get(userId) ?? ''}${name}`;
+}
+
+function emptyWin(difficulty: SudokuGuruDifficulty) {
+  return { day: todayKey(), difficulty, bare: false, pencilUsed: null as boolean | null, seconds: 15 };
+}
+
+async function handleAchievement(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await readJson(req) as { initData?: unknown; pin?: unknown; win?: { difficulty?: unknown; settings?: unknown; pencilUsed?: unknown; seconds?: unknown } };
+    const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
+    if (!signed) {
+      sendJson(res, 401, { ok: false });
+      return;
+    }
+    if (body.pin !== undefined) {
+      const achievements = await toggleListedPin(signed.userId, body.pin);
+      sendJson(res, achievements ? 200 : 400, { ok: Boolean(achievements), achievements: achievements ?? await readPublic(signed.userId) });
+      return;
+    }
+    if (body.win && typeof body.win === 'object') {
+      const facts = winFactsFromBody(body.win);
+      const seconds = typeof body.win.seconds === 'number' ? Math.floor(body.win.seconds) : -1;
+      if (!facts) {
+        sendJson(res, 400, { ok: false });
+        return;
+      }
+      const achievements = await recordWin(signed.userId, { ...facts, seconds });
+      sendJson(res, achievements ? 200 : 400, { ok: Boolean(achievements), achievements: achievements ?? await readPublic(signed.userId) });
+      return;
+    }
+    sendJson(res, 200, { ok: true, achievements: await readPublic(signed.userId) });
+  } catch (error) {
+    console.error('Failed to update achievements.', error);
+    sendJson(res, 500, { ok: false });
+  }
+}
+
 async function editCard(chatId: number, card: ChallengeCard, record: { name: string; seconds: number; day: string } | null): Promise<void> {
   if (!card.messageId) return;
   const botUsername = await ensureUsername();
   try {
-    await bot.telegram.editMessageText(chatId, card.messageId, undefined, renderCard(card, record), cardKeyboard(botUsername, card));
+    await bot.telegram.editMessageText(chatId, card.messageId, undefined, await dailyText(card, record), cardKeyboard(botUsername, card));
   } catch (error) {
     if (!isNotModified(error)) console.error('Failed to refresh the chat card.', error);
   }
@@ -458,7 +517,7 @@ const sentMatchCards = new Map<string, string>();
 
 async function editInlineMatch(match: StoredMatch): Promise<void> {
   const text = messages(match.lang);
-  const body = renderMatch(match.lang, match.difficulty, match.entries, match.present ?? [], match.settings);
+  const body = await matchText(match);
   await editMatchNotices(match, body);
   if (!match.inlineMessageId || sentMatchCards.get(match.inlineMessageId) === body) return;
   await bot.telegram.editMessageText(
@@ -535,6 +594,7 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
       seconds: body.seconds,
       samples: body.samples,
     });
+    if (noted?.freshStart && noted.match.hostId) await recordStart(noted.match.hostId, signed.userId);
     if (noted && (noted.refreshCard || noted.match.entries.length > 0)) await editInlineMatch(noted.match);
     const match = noted?.match ?? await readMatch(id);
     if (!match) {
@@ -699,6 +759,15 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
     const beat = seconds < existing.seconds && (previousBest === null || seconds < previousBest);
+    if (signed.userId !== existing.userId) await recordStart(existing.userId, signed.userId);
+    if (beat && bareSettings(existing.settings) && signed.userId !== existing.userId) {
+      await recordWin(signed.userId, {
+        ...emptyWin(existing.difficulty),
+        bare: true,
+        beatBareAuthor: true,
+        seconds,
+      });
+    }
     if (beat && signed.userId !== existing.userId) {
       const copy = messages(cardLang(existing.lang));
       const text = copy.beat(
@@ -728,6 +797,7 @@ async function openDuelFromMessage(ctx: {
     if (inlineMessageId) await bindDuelMessage(id, inlineMessageId);
     const lang = langFrom(ctx.from.language_code);
     const noted = await noteDuelGuest(id, ctx.from.id, displayName(ctx.from, lang));
+    if (noted && noted.userId !== ctx.from.id) await recordStart(noted.userId, ctx.from.id);
     const duel = noted ?? await readDuel(id);
     if (duel) await editDuelMessage(duel);
     const botUsername = await ensureUsername();
@@ -738,19 +808,22 @@ async function openDuelFromMessage(ctx: {
   }
 }
 
-function guestLine(guest: DuelGuest, bullet: boolean): string {
+function guestLine(guest: DuelGuest, bullet: boolean, marks: ReadonlyMap<number, string>): string {
   const when = typeof guest.joinedAt === 'number' ? formatJoined(guest.joinedAt) : '';
   const result = guest.seconds === null ? '' : formatSeconds(guest.seconds);
   const time = [when, result].filter(Boolean).join(' · ');
-  const text = time ? `${guest.name} — ${time}` : guest.name;
+  const name = `${marks.get(guest.userId) ?? ''}${guest.name}`;
+  const text = time ? `${name} — ${time}` : name;
   return bullet ? `• ${text}` : text;
 }
 
-function renderDuelMessage(duel: StoredDuel): string {
-  const copy = messages(cardLang(duel.lang));
+async function renderDuelMessage(duel: StoredDuel): Promise<string> {
+  const lang = cardLang(duel.lang);
+  const marks = await prefixesFor([duel.userId, ...(duel.guests ?? []).map(guest => guest.userId)], lang);
+  const copy = messages(lang);
   const lines = [
     `Sudoku · ${copy.difficulties[duel.difficulty]}`,
-    `${duel.name} — ${formatSeconds(duel.seconds)}`,
+    `${marks.get(duel.userId) ?? ''}${duel.name} — ${formatSeconds(duel.seconds)}`,
   ];
   if (typeof duel.score === 'number') lines.push(copy.score(duel.score));
   lines.push(
@@ -761,14 +834,14 @@ function renderDuelMessage(duel: StoredDuel): string {
   const finished = (duel.guests ?? []).filter(guest => guest.seconds !== null);
   if (playing.length > 0) {
     lines.push('', copy.joined);
-    playing.slice(0, 10).forEach(guest => lines.push(guestLine(guest, true)));
+    playing.slice(0, 10).forEach(guest => lines.push(guestLine(guest, true, marks)));
   }
   if (finished.length > 0) lines.push('');
   finished
     .slice()
     .sort((left, right) => (left.seconds ?? 0) - (right.seconds ?? 0))
     .slice(0, 10)
-    .forEach(guest => lines.push(guestLine(guest, false)));
+    .forEach(guest => lines.push(guestLine(guest, false, marks)));
   return lines.join('\n');
 }
 
@@ -779,7 +852,7 @@ async function editDuelMessage(duel: StoredDuel): Promise<void> {
     undefined,
     undefined,
     duel.inlineMessageId,
-    renderDuelMessage(duel),
+    await renderDuelMessage(duel),
     {
       reply_markup: { inline_keyboard: [[{ text: copy.beatRecord, callback_data: `d:${duel.id}` }]] },
       link_preview_options: { is_disabled: true },
@@ -797,7 +870,7 @@ async function prepareChallengeMessage(
   const copy = messages(lang);
   const lines = [
     `Sudoku · ${copy.difficulties[duel.difficulty]}`,
-    `${duel.name} — ${formatSeconds(duel.seconds)}`,
+    `${await taggedName(userId, duel.name, lang)} — ${formatSeconds(duel.seconds)}`,
   ];
   if (typeof duel.score === 'number') lines.push(copy.score(duel.score));
   lines.push(
