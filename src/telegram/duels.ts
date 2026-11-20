@@ -3,7 +3,8 @@ import { randomBytes } from 'crypto';
 import path from 'path';
 import { Lang } from '@/i18n';
 import { GhostRace, readSettingsSnapshot } from '@/sudoku/duel';
-import { sanitizePace } from '@/sudoku/pace';
+import { PaceSample, sanitizePace } from '@/sudoku/pace';
+import { readSubmittedScore } from '@/sudoku/score';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from '@/sudoku/types';
 
 const MAX_SECONDS = 24 * 60 * 60;
@@ -16,6 +17,9 @@ export interface DuelGuest {
   seconds: number | null;
   joinedAt?: number;
   forfeited?: boolean;
+  score?: number;
+  total?: number;
+  samples?: PaceSample[];
 }
 
 export interface StoredDuel extends GhostRace {
@@ -26,6 +30,13 @@ export interface StoredDuel extends GhostRace {
   score?: number;
   inlineMessageId?: string;
   guests?: DuelGuest[];
+  notices?: DuelNotice[];
+}
+
+export interface DuelNotice {
+  chatId: number;
+  messageId: number;
+  widget?: boolean;
 }
 
 export interface NewDuel {
@@ -131,10 +142,18 @@ export async function forfeitDuelGuest(id: string, userId: number, name: string)
   });
 }
 
-export async function recordDuelResult(id: string, userId: number, name: string, seconds: number): Promise<StoredDuel | null> {
+export async function recordDuelResult(
+  id: string,
+  userId: number,
+  name: string,
+  seconds: number,
+  pace?: { total: number; samples: unknown; score?: unknown },
+): Promise<StoredDuel | null> {
   if (!Number.isInteger(userId) || userId <= 0) return null;
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_SECONDS) return null;
   const guestName = name.replace(/\s+/g, ' ').trim().slice(0, 32) || 'Player';
+  const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
+  const score = readSubmittedScore(pace?.score);
   return updateDuel(id, duel => {
     const bestSeconds = duel.bestSeconds !== null && seconds >= duel.bestSeconds ? duel.bestSeconds : seconds;
     if (duel.userId === userId) return { ...duel, bestSeconds };
@@ -142,12 +161,18 @@ export async function recordDuelResult(id: string, userId: number, name: string,
     const previousGuest = duel.guests?.find(guest => guest.userId === userId);
     if (previousGuest?.forfeited) return duel;
     const previous = previousGuest?.seconds ?? null;
-    const guestSeconds = previous !== null && previous <= seconds ? previous : seconds;
+    const keepPrevious = previous !== null && previous <= seconds;
     guests.push({
       userId,
       name: guestName,
-      seconds: guestSeconds,
+      seconds: keepPrevious ? previous : seconds,
       joinedAt: previousGuest?.joinedAt ?? Date.now(),
+      ...(keepPrevious
+        ? { score: previousGuest?.score, total: previousGuest?.total, samples: previousGuest?.samples }
+        : {
+          ...(score === undefined ? {} : { score }),
+          ...(samples && pace ? { total: pace.total, samples } : {}),
+        }),
     });
     return { ...duel, bestSeconds, guests };
   });
@@ -161,6 +186,30 @@ async function updateDuel(id: string, change: (duel: StoredDuel) => StoredDuel):
   const next = change(duel);
   await writeFile(path.join(duelDir, `${id}.json`), JSON.stringify(next));
   return next;
+}
+
+export async function rememberDuelNotice(
+  id: string,
+  chatId: number,
+  messageId: number,
+  widget = false,
+): Promise<StoredDuel | null> {
+  if (!Number.isInteger(chatId) || !Number.isInteger(messageId)) return null;
+  return updateDuel(id, duel => {
+    const notices = duel.notices ?? [];
+    if (notices.some(item => item.chatId === chatId && item.messageId === messageId)) return duel;
+    return {
+      ...duel,
+      notices: [...notices, { chatId, messageId, ...(widget ? { widget: true } : {}) }].slice(-20),
+    };
+  });
+}
+
+export async function replaceDuelNotice(id: string, from: DuelNotice, to: DuelNotice): Promise<StoredDuel | null> {
+  return updateDuel(id, duel => {
+    const notices = (duel.notices ?? []).filter(item => item.chatId !== from.chatId || item.messageId !== from.messageId);
+    return { ...duel, notices: [...notices, to].slice(-20) };
+  });
 }
 
 export function toGhost(duel: StoredDuel): GhostRace {
@@ -208,8 +257,7 @@ async function updateFirestoreDuel(id: string, change: (duel: StoredDuel) => Sto
 }
 
 function readScore(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1_000_000) return undefined;
-  return value;
+  return readSubmittedScore(value);
 }
 
 function isDifficulty(value: unknown): value is SudokuGuruDifficulty {

@@ -211,21 +211,40 @@ export default function GameWrapper() {
       if (challengeRef.current && finishedBoard?.source === 'online') {
         const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(finishedBoard.cells));
         paceRef.current = samples;
-        void submitGroupScore(timeRef.current, samples, cellsToFill(finishedBoard.cells)).then(result => {
+        void submitGroupScore(
+          timeRef.current,
+          samples,
+          cellsToFill(finishedBoard.cells),
+          settledScore(difficultyRef.current, marksRef.current),
+        ).then(result => {
           if (result?.improved) setGroupPlace(result.place);
         });
       }
       if (matchIdRef.current && finishedBoard?.source === 'online') {
         const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(finishedBoard.cells));
         paceRef.current = samples;
-        void reportMatchResult(timeRef.current, samples, cellsToFill(finishedBoard.cells)).then(pace => {
+        void reportMatchResult(
+          timeRef.current,
+          samples,
+          cellsToFill(finishedBoard.cells),
+          settledScore(difficultyRef.current, marksRef.current),
+        ).then(pace => {
           if (!pace) return;
           if (pace.leader) setMatchLeader(pace.leader);
           const next = pace.leader ?? pace.rival;
           if (next) setSavedRival(current => sameRival(current, next) ? current : next);
         });
       }
-      if (ghostRef.current) void reportDuelResult(ghostRef.current.id, timeRef.current);
+      if (ghostRef.current) {
+        const pace = finishedBoard
+          ? {
+            samples: appendPace(paceRef.current, timeRef.current, cellsLeft(finishedBoard.cells)),
+            total: cellsToFill(finishedBoard.cells),
+            score: settledScore(difficultyRef.current, marksRef.current),
+          }
+          : undefined;
+        void reportDuelResult(ghostRef.current.id, timeRef.current, pace);
+      }
       const finished = boardRef.current;
       const difficulty = difficultyRef.current || finished?.difficulty;
       if (finished && difficulty) {

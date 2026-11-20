@@ -4,6 +4,7 @@ import path from 'path';
 import { Lang } from '@/i18n';
 import { readSettingsSnapshot } from '@/sudoku/duel';
 import { PaceSample, paceAt, pacePercent, sanitizePace } from '@/sudoku/pace';
+import { readSubmittedScore } from '@/sudoku/score';
 import { SUDOKU_GURU_LEVEL_MAX, SUDOKU_GURU_LEVEL_MIN, SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
 
@@ -20,6 +21,7 @@ export interface MatchEntry {
   settings?: GameSettingsType;
   total?: number;
   samples?: PaceSample[];
+  score?: number;
 }
 
 export interface MatchLeader {
@@ -55,11 +57,13 @@ export interface StoredMatch {
   settings?: GameSettingsType;
   notices?: MatchNotice[];
   hostId?: number;
+  chartAt?: number;
 }
 
 export interface MatchNotice {
   chatId: number;
   messageId: number;
+  widget?: boolean;
 }
 
 export interface MatchPlayerView {
@@ -153,7 +157,7 @@ export async function recordMatchResult(
   userId: number,
   name: string,
   seconds: number,
-  pace?: { total: number; samples: unknown },
+  pace?: { total: number; samples: unknown; score?: unknown },
 ): Promise<MatchResult | null> {
   if (process.env.RECORDS_BACKEND === 'firestore') return recordFirestore(id, userId, name, seconds, pace);
   return withFile(file => {
@@ -179,24 +183,56 @@ function newMatch(inlineMessageId: string, difficulty: SudokuGuruDifficulty, lan
   };
 }
 
-export async function rememberMatchNotice(id: string, chatId: number, messageId: number): Promise<StoredMatch | null> {
+export async function rememberMatchNotice(
+  id: string,
+  chatId: number,
+  messageId: number,
+  widget = false,
+): Promise<StoredMatch | null> {
   if (!/^[a-f0-9]{16}$/.test(id) || !Number.isInteger(chatId) || !Number.isInteger(messageId)) return null;
-  if (process.env.RECORDS_BACKEND === 'firestore') return noticeFirestore(id, chatId, messageId);
+  if (process.env.RECORDS_BACKEND === 'firestore') return noticeFirestore(id, chatId, messageId, widget);
   return withFile(file => {
     const match = file.matches[id];
     if (!match || !fresh(match)) return null;
-    appendNotice(match, chatId, messageId);
+    appendNotice(match, chatId, messageId, widget);
     return match;
   });
 }
 
-function appendNotice(match: StoredMatch, chatId: number, messageId: number): void {
-  const notices = match.notices ?? [];
-  if (notices.some(item => item.chatId === chatId && item.messageId === messageId)) return;
-  match.notices = [...notices, { chatId, messageId }].slice(-20);
+export async function replaceMatchNotice(id: string, from: MatchNotice, to: MatchNotice): Promise<StoredMatch | null> {
+  if (!/^[a-f0-9]{16}$/.test(id)) return null;
+  const swap = (match: StoredMatch): void => {
+    const notices = (match.notices ?? []).filter(item => item.chatId !== from.chatId || item.messageId !== from.messageId);
+    match.notices = [...notices, to].slice(-20);
+  };
+  if (process.env.RECORDS_BACKEND === 'firestore') {
+    const { Firestore } = await import('@google-cloud/firestore');
+    const ref = new Firestore().doc(`matches/${id}`);
+    return ref.firestore.runTransaction(async transaction => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return null;
+      const match = snapshot.data() as StoredMatch;
+      if (!fresh(match)) return null;
+      swap(match);
+      transaction.set(ref, match);
+      return match;
+    });
+  }
+  return withFile(file => {
+    const match = file.matches[id];
+    if (!match || !fresh(match)) return null;
+    swap(match);
+    return match;
+  });
 }
 
-async function noticeFirestore(id: string, chatId: number, messageId: number): Promise<StoredMatch | null> {
+function appendNotice(match: StoredMatch, chatId: number, messageId: number, widget = false): void {
+  const notices = match.notices ?? [];
+  if (notices.some(item => item.chatId === chatId && item.messageId === messageId)) return;
+  match.notices = [...notices, { chatId, messageId, ...(widget ? { widget: true } : {}) }].slice(-20);
+}
+
+async function noticeFirestore(id: string, chatId: number, messageId: number, widget = false): Promise<StoredMatch | null> {
   const { Firestore } = await import('@google-cloud/firestore');
   const ref = new Firestore().doc(`matches/${id}`);
   return ref.firestore.runTransaction(async transaction => {
@@ -204,7 +240,7 @@ async function noticeFirestore(id: string, chatId: number, messageId: number): P
     if (!snapshot.exists) return null;
     const match = snapshot.data() as StoredMatch;
     if (!fresh(match)) return null;
-    appendNotice(match, chatId, messageId);
+    appendNotice(match, chatId, messageId, widget);
     transaction.set(ref, match);
     return match;
   });
@@ -227,7 +263,7 @@ function applyResult(
   userId: number,
   name: string,
   seconds: number,
-  pace?: { total: number; samples: unknown },
+  pace?: { total: number; samples: unknown; score?: unknown },
 ): MatchResult | null {
   if (!fresh(match) || !Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) return null;
   if (match.present?.some(player => player.userId === userId && player.forfeited)) return null;
@@ -235,7 +271,10 @@ function applyResult(
   const current = match.entries.find(entry => entry.userId === userId);
   const improved = !current || seconds < current.seconds;
   const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
-  const paceFields = samples && pace ? { total: pace.total, samples } : {};
+  const score = readSubmittedScore(pace?.score);
+  const paceFields = samples && pace
+    ? { total: pace.total, samples, ...(score === undefined ? {} : { score }) }
+    : (score === undefined ? {} : { score });
   if (!current) {
     match.entries.push({
       userId,
@@ -250,10 +289,11 @@ function applyResult(
     current.name = name;
     current.startedAt ??= presence?.startedAt;
     if (!current.settings && presence?.settings) current.settings = presence.settings;
-    if (paceFields.samples) {
-      current.total = paceFields.total;
-      current.samples = paceFields.samples;
+    if (samples && pace) {
+      current.total = pace.total;
+      current.samples = samples;
     }
+    if (score !== undefined) current.score = score;
   }
   match.entries.sort((left, right) => left.seconds - right.seconds || left.userId - right.userId);
   match.present = (match.present ?? []).filter(player => player.userId !== userId);
@@ -349,6 +389,10 @@ function addPlayer(
     let refreshCard = locked;
     if (extras?.forfeit && !existing.forfeited) {
       existing.forfeited = true;
+      refreshCard = true;
+    }
+    if (progressChanged && Date.now() - (match.chartAt ?? 0) >= 20_000) {
+      match.chartAt = Date.now();
       refreshCard = true;
     }
     match.present = present;
@@ -469,7 +513,7 @@ async function recordFirestore(
   userId: number,
   name: string,
   seconds: number,
-  pace?: { total: number; samples: unknown },
+  pace?: { total: number; samples: unknown; score?: unknown },
 ): Promise<MatchResult | null> {
   const { Firestore } = await import('@google-cloud/firestore');
   const db = new Firestore();

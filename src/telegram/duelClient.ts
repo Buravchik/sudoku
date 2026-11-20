@@ -77,7 +77,11 @@ export async function forfeitDuel(id: string): Promise<void> {
   }
 }
 
-export async function reportDuelResult(id: string, seconds: number): Promise<void> {
+export async function reportDuelResult(
+  id: string,
+  seconds: number,
+  pace?: { samples: PaceSample[]; total: number; score: number },
+): Promise<void> {
   const base = apiBase();
   const initData = window.Telegram?.WebApp?.initData;
   if (!base || !initData) return;
@@ -85,7 +89,12 @@ export async function reportDuelResult(id: string, seconds: number): Promise<voi
     await fetch(`${base}/duel/result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, id, seconds }),
+      body: JSON.stringify({
+        initData,
+        id,
+        seconds,
+        ...(pace ? { total: pace.total, samples: compactPaceForSend(pace.samples), score: pace.score } : {}),
+      }),
     });
   } catch (error) {
     console.error('Failed to report the duel result.', error);

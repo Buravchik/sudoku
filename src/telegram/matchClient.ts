@@ -107,6 +107,7 @@ export async function reportMatchResult(
   seconds: number,
   samples: PaceSample[],
   total: number,
+  score: number,
 ): Promise<{ leader: LiveRival | null; rival: LiveRival | null } | null> {
   const url = endpoint('/match/result');
   const initData = window.Telegram?.WebApp?.initData;
@@ -115,7 +116,7 @@ export async function reportMatchResult(
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, matchId: readStartParam(), seconds, total, samples: compactPaceForSend(samples) }),
+      body: JSON.stringify({ initData, matchId: readStartParam(), seconds, total, samples: compactPaceForSend(samples), score }),
     });
     if (!response.ok) return null;
     const payload = await response.json() as { ok?: boolean; leader?: unknown; rival?: unknown };

@@ -1,9 +1,15 @@
 import { cardLang, messages } from '@/i18n';
 import { buildStartParam } from '@/sudoku/daily';
 import { settingsNickname } from '@/sudoku/nicknames';
+import { PaceSample } from '@/sudoku/pace';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
 import { ChallengeCard, ChatRecord } from './records';
+
+function finishText(seconds: number, score?: number): string {
+  const points = typeof score === 'number' ? ` · ${score}` : '';
+  return `${formatSeconds(seconds)}${points}`;
+}
 
 export function renderCard(card: ChallengeCard, record: ChatRecord | null, marks: ReadonlyMap<number, string> = new Map()): string {
   const text = messages(cardLang(card.lang));
@@ -23,7 +29,7 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null, marks
   if (card.entries.length === 0) lines.push(text.nobody);
   else {
     card.entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`✓ ${index + 1}. ${tagged(entry.name, entry.userId, marks)} — ${formatSeconds(entry.seconds)}`);
+      lines.push(`✓ ${index + 1}. ${tagged(entry.name, entry.userId, marks)} — ${finishText(entry.seconds, entry.score)}`);
     });
     if (card.entries.length > 10) lines.push(text.more(card.entries.length - 10));
   }
@@ -36,8 +42,8 @@ export function renderCard(card: ChallengeCard, record: ChatRecord | null, marks
 export function renderMatch(
   lang: ReturnType<typeof cardLang>,
   difficulty: SudokuGuruDifficulty,
-  entries: { userId?: number; name: string; seconds: number; startedAt?: number }[],
-  playing: { userId?: number; name: string; startedAt?: number }[] = [],
+  entries: { userId?: number; name: string; seconds: number; startedAt?: number; score?: number; total?: number; samples?: PaceSample[] }[],
+  playing: { userId?: number; name: string; startedAt?: number; elapsed?: number; total?: number; samples?: PaceSample[] }[] = [],
   settings?: GameSettingsType,
   marks: ReadonlyMap<number, string> = new Map(),
 ): string {
@@ -56,7 +62,7 @@ export function renderMatch(
   if (entries.length === 0) lines.push(text.nobody);
   else {
     entries.slice(0, 10).forEach((entry, index) => {
-      lines.push(`✓ ${index + 1}. ${tagged(entry.name, entry.userId, marks)} — ${formatSeconds(entry.seconds)}`);
+      lines.push(`✓ ${index + 1}. ${tagged(entry.name, entry.userId, marks)} — ${finishText(entry.seconds, entry.score)}`);
     });
     if (entries.length > 10) lines.push(text.more(entries.length - 10));
   }

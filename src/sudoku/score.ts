@@ -38,6 +38,11 @@ export function finalScore(marks: readonly ScoreMark[], difficulty: SudokuGuruDi
   return difficultyMultiplier(difficulty) * net;
 }
 
+export function readSubmittedScore(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1_000_000) return undefined;
+  return value;
+}
+
 export function restoreMarks(value: unknown): ScoreMark[] {
   if (!Array.isArray(value)) return [];
   const marks: ScoreMark[] = [];

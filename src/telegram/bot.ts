@@ -5,15 +5,18 @@ import { cardLang, Lang, langFrom, messages } from '@/i18n';
 import { difficultyCode, difficultyFromCode, parseDifficultyArg, parseStartParam, todayKey } from '@/sudoku/daily';
 import { parseDuelId } from '@/sudoku/duel';
 import { parseMatchId } from '@/sudoku/match';
+import { PaceSample } from '@/sudoku/pace';
 import { settingsNickname } from '@/sudoku/nicknames';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 import { GameSettingsType } from '@/types';
 import { playLink, renderCard, renderMatch, formatJoined, formatSeconds } from './cardText';
+import { captionOf, deleteChatMessage, editChallengeWidget, editChartPhoto, sendChallengeWidget, sendChartPhoto } from './cardMedia';
+import { ChartPerson, chartKey, chartPng, chartState } from './paceChart';
 import { welcomeWidgetHtml } from './welcomeWidget';
 import { readSignedInitData } from './initData';
 import { ChallengeCard, findTodayCard, recordScore, touchProgress, withRecords } from './records';
-import { acceptDuel, bindDuelMessage, DuelGuest, forfeitDuelGuest, noteDuelGuest, readDuel, recordDuelResult, saveDuel, StoredDuel, toGhost } from './duels';
-import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, rememberMatchNotice, StoredMatch, toMatchView } from './matches';
+import { acceptDuel, bindDuelMessage, DuelGuest, DuelNotice, forfeitDuelGuest, noteDuelGuest, readDuel, recordDuelResult, rememberDuelNotice, replaceDuelNotice, saveDuel, StoredDuel, toGhost } from './duels';
+import { noteMatchPlayer, openInlineMatch, readMatch, recordMatchResult, rememberMatchNotice, replaceMatchNotice, StoredMatch, toMatchView } from './matches';
 import { prefixesFor, readPublic, recordStart, recordWin, toggleListedPin, winFactsFromBody } from './players';
 import { bareSettings } from '@/sudoku/achievements';
 
@@ -48,14 +51,22 @@ bot.start(async (ctx) => {
         : difficulty
           ? text.challengeTitle(text.difficulties[difficulty])
           : text.welcome;
+    const replyMarkup = {
+      inline_keyboard: [
+        [{ text: duel ? text.beatRecord : text.play, web_app: { url: url.toString() } }],
+        [{ text: text.dropInChat, switch_inline_query: difficulty ?? '' }],
+      ],
+    };
+    const people = match ? await namedMatchPeople(match) : duel ? await namedDuelPeople(duel) : [];
+    const sentId = await sendChallengeWidget(token, ctx.chat.id, captionOf(title), replyMarkup, chartState(people));
+    if (sentId) {
+      if (openedMatch && match) await rememberMatchNotice(openedMatch, ctx.chat.id, sentId, true);
+      if (openedDuel && duel) await rememberDuelNotice(openedDuel, ctx.chat.id, sentId, true);
+      return;
+    }
     const sent = await ctx.reply(title, {
       link_preview_options: { is_disabled: true },
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: duel ? text.beatRecord : text.play, web_app: { url: url.toString() } }],
-          [{ text: text.dropInChat, switch_inline_query: difficulty ?? '' }],
-        ],
-      },
+      reply_markup: replyMarkup,
     });
     if (openedMatch && sent && 'message_id' in sent) {
       const saved = await rememberMatchNotice(openedMatch, ctx.chat.id, sent.message_id);
@@ -230,23 +241,10 @@ function isGroup(type: string): boolean {
 }
 
 async function publishCard(chatId: number, difficulty: SudokuGuruDifficulty, lang: Lang): Promise<void> {
-  const botUsername = await ensureUsername();
   await withRecords(async (file) => {
     const card = findTodayCard(file, chatId, difficulty, lang);
     const record = file.chats[String(chatId)]?.records?.[difficulty] ?? null;
-    const extra = cardKeyboard(botUsername, card);
-    const text = await dailyText(card, record);
-    if (card.messageId) {
-      try {
-        await bot.telegram.editMessageText(chatId, card.messageId, undefined, text, extra);
-        return;
-      } catch (error) {
-        if (isNotModified(error)) return;
-        console.error('Card edit failed, sending a new one.', error);
-      }
-    }
-    const message = await bot.telegram.sendMessage(chatId, text, extra);
-    card.messageId = message.message_id;
+    await refreshGroupCard(chatId, card, record);
   });
 }
 
@@ -314,7 +312,7 @@ function startScoreServer(): http.Server {
     }
 
     try {
-      const body = await readJson(req) as { initData?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
+      const body = await readJson(req) as { initData?: unknown; seconds?: unknown; total?: unknown; samples?: unknown; score?: unknown };
       const initData = typeof body.initData === 'string' ? body.initData : '';
       const seconds = body.seconds;
       const signed = readSignedInitData(initData, token);
@@ -334,7 +332,7 @@ function startScoreServer(): http.Server {
         signed.userId,
         signed.name,
         Math.floor(seconds),
-        { total: typeof body.total === 'number' ? body.total : -1, samples: body.samples },
+        { total: typeof body.total === 'number' ? body.total : -1, samples: body.samples, score: body.score },
       ));
       if (!update.ok) {
         sendJson(res, 400, { ok: false });
@@ -383,7 +381,7 @@ async function handleProgress(req: http.IncomingMessage, res: http.ServerRespons
       sendJson(res, 400, { ok: false });
       return;
     }
-    if (update.joined) await editCard(update.chatId, update.card, update.record);
+    if (update.joined || update.redraw) await editCard(update.chatId, update.card, update.record);
     sendJson(res, 200, { ok: true, leader: update.view.leader, players: update.view.players, rival: update.view.rival });
   } catch (error) {
     console.error('Failed to update the live race.', error);
@@ -443,16 +441,189 @@ async function handleAchievement(req: http.IncomingMessage, res: http.ServerResp
 
 async function editCard(chatId: number, card: ChallengeCard, record: { name: string; seconds: number; day: string } | null): Promise<void> {
   if (!card.messageId) return;
-  const botUsername = await ensureUsername();
-  try {
-    await bot.telegram.editMessageText(chatId, card.messageId, undefined, await dailyText(card, record), cardKeyboard(botUsername, card));
-  } catch (error) {
-    if (!isNotModified(error)) console.error('Failed to refresh the chat card.', error);
-  }
+  await refreshGroupCard(chatId, card, record);
 }
 
 function isNotModified(error: unknown): boolean {
   return error instanceof Error && error.message.includes('message is not modified');
+}
+
+async function refreshGroupCard(
+  chatId: number,
+  card: ChallengeCard,
+  record: { name: string; seconds: number; day: string } | null,
+): Promise<void> {
+  const botUsername = await ensureUsername();
+  const caption = captionOf(await dailyText(card, record));
+  const people = cardPeople(card);
+  const extra = cardKeyboard(botUsername, card);
+  const key = `${caption}\n${chartKey(people)}`;
+  if (card.messageId && sentGroupCards.get(card.id) === key) return;
+  if (people.length === 0) {
+    if (card.messageId) {
+      try {
+        await bot.telegram.editMessageText(chatId, card.messageId, undefined, caption, extra);
+        sentGroupCards.set(card.id, key);
+      } catch (error) {
+        if (!isNotModified(error)) console.error('Failed to refresh the chat card.', error);
+      }
+      return;
+    }
+    const message = await bot.telegram.sendMessage(chatId, caption, extra);
+    card.messageId = message.message_id;
+    sentGroupCards.set(card.id, key);
+    return;
+  }
+  const png = chartPng(people);
+  if (card.messageId) {
+    const edited = await editChartPhoto(token, { chatId, messageId: card.messageId }, caption, png, extra.reply_markup);
+    if (edited !== 'fail') {
+      sentGroupCards.set(card.id, key);
+      return;
+    }
+    try {
+      await bot.telegram.editMessageText(chatId, card.messageId, undefined, caption, extra);
+      sentGroupCards.set(card.id, key);
+    } catch (error) {
+      if (!isNotModified(error)) console.error('Failed to refresh the chat card.', error);
+    }
+    return;
+  }
+  const messageId = await sendChartPhoto(token, chatId, caption, png, extra.reply_markup);
+  if (!messageId) return;
+  card.messageId = messageId;
+  sentGroupCards.set(card.id, key);
+}
+
+async function editDuelNotices(duel: StoredDuel, body: string): Promise<void> {
+  const text = messages(cardLang(duel.lang));
+  const url = new URL(webAppUrl);
+  url.searchParams.set('match', `d${duel.id}`);
+  const replyMarkup = {
+    inline_keyboard: [
+      [{ text: text.beatRecord, web_app: { url: url.toString() } }],
+      [{ text: text.dropInChat, switch_inline_query: duel.difficulty }],
+    ],
+  };
+  const caption = captionOf(body);
+  const state = chartState(await namedDuelPeople(duel));
+  const fingerprint = `${caption}\n${state}`;
+  for (const notice of duel.notices ?? []) {
+    const key = `${notice.chatId}:${notice.messageId}`;
+    if (sentPrivateCards.get(key) === fingerprint) continue;
+    if (!notice.widget) {
+      await upgradePrivateWidget('duel', duel.id, notice, caption, state, replyMarkup);
+      continue;
+    }
+    await editChallengeWidget(token, notice.chatId, notice.messageId, caption, replyMarkup, state);
+    sentPrivateCards.set(key, fingerprint);
+  }
+}
+
+async function upgradePrivateWidget(
+  kind: 'match' | 'duel',
+  id: string,
+  notice: DuelNotice,
+  caption: string,
+  state: string,
+  replyMarkup: object,
+): Promise<void> {
+  const key = `${kind}:${notice.chatId}:${notice.messageId}`;
+  if (upgrading.has(key)) return;
+  upgrading.add(key);
+  try {
+    const messageId = await sendChallengeWidget(token, notice.chatId, caption, replyMarkup, state);
+    if (!messageId) return;
+    const next = { chatId: notice.chatId, messageId, widget: true as const };
+    if (kind === 'match') await replaceMatchNotice(id, notice, next);
+    else await replaceDuelNotice(id, notice, next);
+    await deleteChatMessage(token, notice.chatId, notice.messageId);
+    sentPrivateCards.set(`${notice.chatId}:${messageId}`, `${caption}\n${state}`);
+  } finally {
+    upgrading.delete(key);
+  }
+}
+
+function cardPeople(card: ChallengeCard): ChartPerson[] {
+  const finishedIds = new Set(card.entries.map(entry => entry.userId));
+  const finished = card.entries.flatMap(entry => (
+    entry.samples && entry.total
+      ? [{ name: entry.name, seconds: entry.seconds, total: entry.total, samples: entry.samples, score: entry.score, done: true }]
+      : []
+  ));
+  const playing = (card.live ?? []).flatMap(player => (
+    !player.finished && !finishedIds.has(player.userId) && player.samples && player.total && (player.seconds ?? 0) > 0
+      ? [{ name: player.name, seconds: player.seconds ?? 0, total: player.total, samples: player.samples, done: false }]
+      : []
+  ));
+  return [...finished, ...playing].slice(0, 8);
+}
+
+function matchPeople(match: StoredMatch, marks?: ReadonlyMap<number, string>): ChartPerson[] {
+  const finishedIds = new Set(match.entries.map(entry => entry.userId));
+  const finished = match.entries.flatMap(entry => (
+    entry.samples && entry.total
+      ? [{
+        name: tagged(entry.name, entry.userId, marks),
+        seconds: entry.seconds,
+        total: entry.total,
+        samples: entry.samples,
+        score: entry.score,
+        done: true,
+      }]
+      : []
+  ));
+  const playing = (match.present ?? []).flatMap(player => (
+    !player.forfeited && !finishedIds.has(player.userId) && player.samples && player.total && (player.elapsed ?? 0) > 0
+      ? [{
+        name: tagged(player.name, player.userId, marks),
+        seconds: player.elapsed ?? 0,
+        total: player.total,
+        samples: player.samples,
+        done: false,
+      }]
+      : []
+  ));
+  return [...finished, ...playing].slice(0, 8);
+}
+
+async function namedMatchPeople(match: StoredMatch): Promise<ChartPerson[]> {
+  const ids = [...match.entries.map(entry => entry.userId), ...(match.present ?? []).map(player => player.userId)];
+  return matchPeople(match, await prefixesFor(ids, cardLang(match.lang)));
+}
+
+function duelPeople(duel: StoredDuel, marks?: ReadonlyMap<number, string>): ChartPerson[] {
+  const author: ChartPerson = {
+    name: tagged(duel.name, duel.userId, marks),
+    seconds: duel.seconds,
+    total: duel.total,
+    samples: duel.samples,
+    score: duel.score,
+    done: true,
+  };
+  const guests = (duel.guests ?? []).flatMap(guest => (
+    guest.seconds !== null && guest.samples && guest.total
+      ? [{
+        name: tagged(guest.name, guest.userId, marks),
+        seconds: guest.seconds,
+        total: guest.total,
+        samples: guest.samples,
+        score: guest.score,
+        done: true,
+      }]
+      : []
+  ));
+  return [author, ...guests].slice(0, 8);
+}
+
+async function namedDuelPeople(duel: StoredDuel): Promise<ChartPerson[]> {
+  const ids = [duel.userId, ...(duel.guests ?? []).map(guest => guest.userId)];
+  return duelPeople(duel, await prefixesFor(ids, cardLang(duel.lang)));
+}
+
+function tagged(name: string, userId: number | undefined, marks: ReadonlyMap<number, string> | undefined): string {
+  if (!marks || userId === undefined) return name;
+  return `${marks.get(userId) ?? ''}${name}`;
 }
 
 function cardKeyboard(username: string, card: ChallengeCard) {
@@ -514,57 +685,66 @@ async function handlePlayOpen(id: string, res: http.ServerResponse): Promise<voi
 }
 
 const sentMatchCards = new Map<string, string>();
+const sentPrivateCards = new Map<string, string>();
+const sentGroupCards = new Map<string, string>();
+const sentDuelCards = new Map<string, string>();
+const upgrading = new Set<string>();
 
 async function editInlineMatch(match: StoredMatch): Promise<void> {
   const text = messages(match.lang);
   const body = await matchText(match);
   await editMatchNotices(match, body);
-  if (!match.inlineMessageId || sentMatchCards.get(match.inlineMessageId) === body) return;
-  await bot.telegram.editMessageText(
-    undefined,
-    undefined,
-    match.inlineMessageId,
-    body,
-    {
-      reply_markup: {
-        inline_keyboard: [[{
-          text: text.play,
-          callback_data: `n:${difficultyCode(match.difficulty)}:${match.lang}`,
-        }]],
-      },
-      link_preview_options: { is_disabled: true },
-    },
-  ).then(() => {
-    sentMatchCards.set(match.inlineMessageId, body);
+  if (!match.inlineMessageId) return;
+  const people = matchPeople(match);
+  const caption = captionOf(body);
+  const key = `${caption}\n${chartKey(people)}`;
+  if (sentMatchCards.get(match.inlineMessageId) === key) return;
+  const replyMarkup = {
+    inline_keyboard: [[{
+      text: text.play,
+      callback_data: `n:${difficultyCode(match.difficulty)}:${match.lang}`,
+    }]],
+  };
+  if (people.length > 0) {
+    const edited = await editChartPhoto(token, { inlineMessageId: match.inlineMessageId }, caption, chartPng(people), replyMarkup);
+    if (edited !== 'fail') {
+      sentMatchCards.set(match.inlineMessageId, key);
+      return;
+    }
+  }
+  await bot.telegram.editMessageText(undefined, undefined, match.inlineMessageId, body, {
+    reply_markup: replyMarkup,
+    link_preview_options: { is_disabled: true },
+  }).then(() => {
+    sentMatchCards.set(match.inlineMessageId, key);
   }, error => {
-    if (isNotModified(error)) sentMatchCards.set(match.inlineMessageId, body);
+    if (isNotModified(error)) sentMatchCards.set(match.inlineMessageId, key);
     else console.error('Failed to refresh the inline match.', error);
   });
 }
-
-const sentPrivateCards = new Map<string, string>();
 
 async function editMatchNotices(match: StoredMatch, body: string): Promise<void> {
   const text = messages(match.lang);
   const url = new URL(webAppUrl);
   url.searchParams.set('match', `i${match.id}`);
+  const replyMarkup = {
+    inline_keyboard: [
+      [{ text: text.play, web_app: { url: url.toString() } }],
+      [{ text: text.dropInChat, switch_inline_query: match.difficulty }],
+    ],
+  };
+  const caption = captionOf(body);
+  const state = chartState(await namedMatchPeople(match));
+  const fingerprint = `${caption}\n${state}`;
   for (const notice of match.notices ?? []) {
     const key = `${notice.chatId}:${notice.messageId}`;
-    if (sentPrivateCards.get(key) === body) continue;
-    await bot.telegram.editMessageText(notice.chatId, notice.messageId, undefined, body, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: text.play, web_app: { url: url.toString() } }],
-          [{ text: text.dropInChat, switch_inline_query: match.difficulty }],
-        ],
-      },
-      link_preview_options: { is_disabled: true },
-    }).then(() => {
-      sentPrivateCards.set(key, body);
-    }, error => {
-      if (isNotModified(error)) sentPrivateCards.set(key, body);
-      else console.error('Failed to refresh the private challenge card.', error);
-    });
+    if (sentPrivateCards.get(key) === fingerprint) continue;
+    if (!notice.widget) {
+      await upgradePrivateWidget('match', match.id, notice, caption, state, replyMarkup);
+      continue;
+    }
+    await editChallengeWidget(token, notice.chatId, notice.messageId, caption, replyMarkup, state);
+    sentPrivateCards.set(key, fingerprint);
   }
 }
 
@@ -638,7 +818,7 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
 
 async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; matchId?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
+    const body = await readJson(req) as { initData?: unknown; matchId?: unknown; seconds?: unknown; total?: unknown; samples?: unknown; score?: unknown };
     const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
     const id = matchIdFrom(signed?.startParam, body.matchId);
     if (!signed || !id) {
@@ -649,6 +829,7 @@ async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResp
     const update = await recordMatchResult(id, signed.userId, signed.name, seconds, {
       total: typeof body.total === 'number' ? body.total : -1,
       samples: body.samples,
+      score: body.score,
     });
     if (!update) {
       sendJson(res, 400, { ok: false });
@@ -743,7 +924,7 @@ async function handleDuelRead(id: string, res: http.ServerResponse): Promise<voi
 
 async function handleDuelResult(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
-    const body = await readJson(req) as { initData?: unknown; id?: unknown; seconds?: unknown; forfeit?: unknown };
+    const body = await readJson(req) as { initData?: unknown; id?: unknown; seconds?: unknown; forfeit?: unknown; total?: unknown; samples?: unknown; score?: unknown };
     const initData = typeof body.initData === 'string' ? body.initData : '';
     const signed = readSignedInitData(initData, token);
     const id = typeof body.id === 'string' ? body.id : '';
@@ -768,7 +949,11 @@ async function handleDuelResult(req: http.IncomingMessage, res: http.ServerRespo
       return;
     }
     const previousBest = existing.bestSeconds;
-    const updated = await recordDuelResult(id, signed.userId, signed.name, seconds);
+    const updated = await recordDuelResult(id, signed.userId, signed.name, seconds, {
+      total: typeof body.total === 'number' ? body.total : -1,
+      samples: body.samples,
+      score: body.score,
+    });
     if (!updated) {
       sendJson(res, 200, { ok: false, beat: false });
       return;
@@ -831,9 +1016,10 @@ async function openDuelFromMessage(ctx: {
 function guestLine(guest: DuelGuest, bullet: boolean, marks: ReadonlyMap<number, string>): string {
   const when = typeof guest.joinedAt === 'number' ? formatJoined(guest.joinedAt) : '';
   const result = guest.seconds === null ? '' : formatSeconds(guest.seconds);
+  const points = typeof guest.score === 'number' ? ` · ${guest.score}` : '';
   const time = [when, result].filter(Boolean).join(' · ');
   const name = `${marks.get(guest.userId) ?? ''}${guest.name}`;
-  const text = time ? `${name} — ${time}` : name;
+  const text = time ? `${name} — ${time}${points}` : name;
   return bullet ? `• ${text}` : text;
 }
 
@@ -841,11 +1027,11 @@ async function renderDuelMessage(duel: StoredDuel): Promise<string> {
   const lang = cardLang(duel.lang);
   const marks = await prefixesFor([duel.userId, ...(duel.guests ?? []).map(guest => guest.userId)], lang);
   const copy = messages(lang);
+  const authorPoints = typeof duel.score === 'number' ? ` · ${duel.score}` : '';
   const lines = [
     `Sudoku · ${copy.difficulties[duel.difficulty]}`,
-    `${marks.get(duel.userId) ?? ''}${duel.name} — ${formatSeconds(duel.seconds)}`,
+    `${marks.get(duel.userId) ?? ''}${duel.name} — ${formatSeconds(duel.seconds)}${authorPoints}`,
   ];
-  if (typeof duel.score === 'number') lines.push(copy.score(duel.score));
   lines.push(
     copy.settingsNamed(settingsNickname(duel.settings, cardLang(duel.lang))),
     copy.preparedLine,
@@ -866,18 +1052,27 @@ async function renderDuelMessage(duel: StoredDuel): Promise<string> {
 }
 
 async function editDuelMessage(duel: StoredDuel): Promise<void> {
+  const body = await renderDuelMessage(duel);
+  await editDuelNotices(duel, body);
   if (!duel.inlineMessageId) return;
+  const inlineMessageId = duel.inlineMessageId;
   const copy = messages(cardLang(duel.lang));
-  await bot.telegram.editMessageText(
-    undefined,
-    undefined,
-    duel.inlineMessageId,
-    await renderDuelMessage(duel),
-    {
-      reply_markup: { inline_keyboard: [[{ text: copy.beatRecord, callback_data: `d:${duel.id}` }]] },
-      link_preview_options: { is_disabled: true },
-    },
-  ).catch(error => {
+  const people = duelPeople(duel);
+  const caption = captionOf(body);
+  const key = `${caption}\n${chartKey(people)}`;
+  if (sentDuelCards.get(inlineMessageId) === key) return;
+  const replyMarkup = { inline_keyboard: [[{ text: copy.beatRecord, callback_data: `d:${duel.id}` }]] };
+  const edited = await editChartPhoto(token, { inlineMessageId }, caption, chartPng(people), replyMarkup);
+  if (edited !== 'fail') {
+    sentDuelCards.set(inlineMessageId, key);
+    return;
+  }
+  await bot.telegram.editMessageText(undefined, undefined, inlineMessageId, body, {
+    reply_markup: replyMarkup,
+    link_preview_options: { is_disabled: true },
+  }).then(() => {
+    sentDuelCards.set(inlineMessageId, key);
+  }, error => {
     if (!isNotModified(error)) console.error('Failed to refresh the challenge message.', error);
   });
 }
@@ -885,18 +1080,16 @@ async function editDuelMessage(duel: StoredDuel): Promise<void> {
 async function prepareChallengeMessage(
   userId: number,
   lang: Lang,
-  duel: { id: string; name: string; difficulty: SudokuGuruDifficulty; seconds: number; settings: GameSettingsType; score?: number },
+  duel: { id: string; name: string; difficulty: SudokuGuruDifficulty; seconds: number; total: number; samples: PaceSample[]; settings: GameSettingsType; score?: number },
 ): Promise<string | null> {
   const copy = messages(lang);
+  const points = typeof duel.score === 'number' ? ` · ${duel.score}` : '';
   const lines = [
     `Sudoku · ${copy.difficulties[duel.difficulty]}`,
-    `${await taggedName(userId, duel.name, lang)} — ${formatSeconds(duel.seconds)}`,
-  ];
-  if (typeof duel.score === 'number') lines.push(copy.score(duel.score));
-  lines.push(
+    `${await taggedName(userId, duel.name, lang)} — ${formatSeconds(duel.seconds)}${points}`,
     copy.settingsNamed(settingsNickname(duel.settings, lang)),
     copy.preparedLine,
-  );
+  ];
   const text = lines.join('\n');
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/savePreparedInlineMessage`, {

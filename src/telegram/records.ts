@@ -6,6 +6,7 @@ import { DailyChallenge, todayKey } from '@/sudoku/daily';
 import { readSettingsSnapshot } from '@/sudoku/duel';
 import { GameSettingsType } from '@/types';
 import { PaceSample, paceAt, pacePercent, sanitizePace } from '@/sudoku/pace';
+import { readSubmittedScore } from '@/sudoku/score';
 import { SudokuGuruDifficulty } from '@/sudoku/types';
 
 const LIVE_STALE_MS = 90_000;
@@ -18,6 +19,9 @@ export interface ScoreEntry {
   userId: number;
   name: string;
   seconds: number;
+  score?: number;
+  total?: number;
+  samples?: PaceSample[];
 }
 
 export interface ChatRecord {
@@ -79,6 +83,7 @@ export interface ProgressUpdate {
   card: ChallengeCard;
   record: ChatRecord | null;
   joined: boolean;
+  redraw: boolean;
 }
 
 export interface ChallengeCard {
@@ -91,6 +96,7 @@ export interface ChallengeCard {
   leader?: LeaderPace;
   live?: LivePlayer[];
   joined?: CardJoiner[];
+  chartAt?: number;
 }
 
 interface ChatState {
@@ -141,7 +147,7 @@ export function recordScore(
   userId: number,
   name: string,
   seconds: number,
-  pace?: { total: number; samples: unknown },
+  pace?: { total: number; samples: unknown; score?: unknown },
 ): ScoreUpdate {
   if (!Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) {
     return { ok: false, reason: 'time' };
@@ -158,15 +164,24 @@ export function recordScore(
 
   const current = card.entries.find(entry => entry.userId === userId);
   const improved = !current || seconds < current.seconds;
-  if (!current) card.entries.push({ userId, name, seconds });
+  const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
+  const score = readSubmittedScore(pace?.score);
+  const paceFields = samples && pace
+    ? { total: pace.total, samples, ...(score === undefined ? {} : { score }) }
+    : (score === undefined ? {} : { score });
+  if (!current) card.entries.push({ userId, name, seconds, ...paceFields });
   else if (improved) {
     current.seconds = seconds;
     current.name = name;
+    if (samples && pace) {
+      current.total = pace.total;
+      current.samples = samples;
+    }
+    if (score !== undefined) current.score = score;
   }
   card.entries.sort((left, right) => left.seconds - right.seconds || left.userId - right.userId);
   const place = card.entries.findIndex(entry => entry.userId === userId) + 1;
   if (place === 1 && improved) {
-    const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
     if (samples && pace) card.leader = { userId, name, seconds, total: pace.total, samples };
     else delete card.leader;
   }
@@ -241,6 +256,12 @@ export function touchProgress(
     ? pace.seconds
     : 0;
   const samples = pace ? sanitizePace(pace.samples, total, seconds) : null;
+  const paceMoved = Boolean(samples) && (
+    !existing?.samples
+    || existing.samples.length !== samples!.length
+    || existing.seconds !== seconds
+    || existing.left !== left
+  );
   if (existing?.finished) {
     existing.name = name;
     existing.updatedAt = now;
@@ -263,6 +284,8 @@ export function touchProgress(
       pacePercent(rightPlayer.total, rightPlayer.left) - pacePercent(leftPlayer.total, leftPlayer.left)
       || leftPlayer.name.localeCompare(rightPlayer.name)
     ));
+  const redraw = paceMoved && !existing?.finished && now - (card.chartAt ?? 0) >= 20_000;
+  if (redraw) card.chartAt = now;
   return {
     view: {
       leader: leader
@@ -275,6 +298,7 @@ export function touchProgress(
     card,
     record: located.chat.records[card.difficulty] ?? null,
     joined: joined || settingsAttached,
+    redraw,
   };
 }
 
