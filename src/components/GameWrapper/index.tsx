@@ -19,6 +19,7 @@ import {
   rememberDroppedChallenge,
   saveSettings,
   saveStoredSession,
+  StoredRival,
 } from '@/sudoku/storage';
 import { Digit, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from '@/sudoku/types';
 import { createDuel, fetchDuel, forfeitDuel, reportDuelResult } from '@/telegram/duelClient';
@@ -71,6 +72,7 @@ export default function GameWrapper() {
   const [liveRival, setLiveRival] = useState<LiveRival | null>(null);
   const [matchId, setMatchId] = useState<string | null>(session.matchId);
   const [matchLeader, setMatchLeader] = useState<GroupLeader | null>(null);
+  const [savedRival, setSavedRival] = useState<StoredRival | null>(session.rival);
   const [matchPlayers, setMatchPlayers] = useState<GroupPlayer[]>([]);
   const [sharing, setSharing] = useState(false);
   const [mistakes, setMistakes] = useState(session.mistakes);
@@ -90,6 +92,7 @@ export default function GameWrapper() {
   const challengeRef = useRef(challenge);
   const ghostRef = useRef(ghost);
   const matchIdRef = useRef(matchId);
+  const savedRivalRef = useRef(savedRival);
   const paceRef = useRef<PaceSample[]>(session.pace);
   const pencilUsedRef = useRef(session.board?.cells.some(cell => cell.draftValues.some(Boolean)) ?? false);
   const historyRef = useRef<PlayedMove[]>([]);
@@ -105,6 +108,7 @@ export default function GameWrapper() {
   challengeRef.current = challenge;
   ghostRef.current = ghost;
   matchIdRef.current = matchId;
+  savedRivalRef.current = savedRival;
   mistakesRef.current = mistakes;
   marksRef.current = marks;
 
@@ -119,6 +123,7 @@ export default function GameWrapper() {
       pace: paceRef.current,
       ghost: ghostRef.current,
       matchId: matchIdRef.current,
+      rival: savedRivalRef.current,
       mistakes: mistakesRef.current,
       marks: marksRef.current,
     });
@@ -140,6 +145,7 @@ export default function GameWrapper() {
         setChallenge(restored.challenge);
         setGhost(restored.ghost);
         setMatchId(restored.matchId);
+        setSavedRival(restored.rival);
         if (restored.ghost) setSettings(restored.ghost.settings);
         paceRef.current = restored.pace;
         historyRef.current = [];
@@ -164,7 +170,7 @@ export default function GameWrapper() {
   useEffect(() => {
     if (!storageReady) return;
     persist();
-  }, [gameState, difficultyState, board, challenge, ghost, matchId, persist, storageReady]);
+  }, [gameState, difficultyState, board, challenge, ghost, matchId, savedRival, persist, storageReady]);
 
   useEffect(() => {
     setClosingConfirmation(storageReady && gameState === 'playing');
@@ -212,7 +218,12 @@ export default function GameWrapper() {
       if (matchIdRef.current && finishedBoard?.source === 'online') {
         const samples = appendPace(paceRef.current, timeRef.current, cellsLeft(finishedBoard.cells));
         paceRef.current = samples;
-        void reportMatchResult(timeRef.current, samples, cellsToFill(finishedBoard.cells));
+        void reportMatchResult(timeRef.current, samples, cellsToFill(finishedBoard.cells)).then(pace => {
+          if (!pace) return;
+          if (pace.leader) setMatchLeader(pace.leader);
+          const next = pace.leader ?? pace.rival;
+          if (next) setSavedRival(current => sameRival(current, next) ? current : next);
+        });
       }
       if (ghostRef.current) void reportDuelResult(ghostRef.current.id, timeRef.current);
       const finished = boardRef.current;
@@ -308,6 +319,24 @@ export default function GameWrapper() {
       window.clearInterval(id);
     };
   }, [gameState, storageReady, matchId]);
+
+  useEffect(() => {
+    const next = groupLeader ?? matchLeader ?? liveRival;
+    if (!next) return;
+    setSavedRival(current => sameRival(current, next) ? current : next);
+  }, [groupLeader, matchLeader, liveRival]);
+
+  useEffect(() => {
+    if (!storageReady || gameState !== 'won' || !matchId) return;
+    let cancelled = false;
+    void fetchMatchState({ look: true, matchId: `i${matchId}` }).then(race => {
+      if (cancelled || !race) return;
+      const next = race.leader ?? race.rival;
+      if (race.leader) setMatchLeader(race.leader);
+      if (next) setSavedRival(current => sameRival(current, next) ? current : next);
+    });
+    return () => { cancelled = true; };
+  }, [storageReady, gameState, matchId]);
 
   useEffect(() => {
     if (gameState !== 'playing') return;
@@ -478,6 +507,8 @@ export default function GameWrapper() {
     setMatchId(null);
     setMatchLeader(null);
     setMatchPlayers([]);
+    savedRivalRef.current = null;
+    setSavedRival(null);
     setShareError(null);
     setSettings(loadSettings());
     setGameState('selectDifficulty');
@@ -613,6 +644,8 @@ export default function GameWrapper() {
     setMatchId(null);
     setMatchLeader(null);
     setMatchPlayers([]);
+    savedRivalRef.current = null;
+    setSavedRival(null);
     setGroupPlace(null);
     setTime(0);
     clearStoredSession();
@@ -697,6 +730,8 @@ export default function GameWrapper() {
     setMatchId(null);
     setMatchLeader(null);
     setMatchPlayers([]);
+    savedRivalRef.current = null;
+    setSavedRival(null);
     setSettings(loadSettings());
     setGroupPlace(null);
     setDifficultyState(difficulty);
@@ -720,7 +755,7 @@ export default function GameWrapper() {
 
   const activeBoard = gameState === 'playing' || gameState === 'won' ? board : null;
   const paceOpponent = ghost ?? (gameState === 'playing' ? (groupLeader ?? matchLeader) : null);
-  const chartRival = ghost ?? groupLeader ?? matchLeader;
+  const chartRival = ghost ?? groupLeader ?? matchLeader ?? liveRival ?? savedRival;
   const difficultyName = difficultyState ? text.difficulties[difficultyState] : null;
 
   return (
@@ -1096,6 +1131,12 @@ function RaceMeter({ label, left, percent, ghost = false }: { label: string; lef
       </div>
     </div>
   );
+}
+
+function sameRival(current: StoredRival | null, next: StoredRival): boolean {
+  if (!current || current.name !== next.name || current.seconds !== next.seconds || current.total !== next.total) return false;
+  return current.samples.length === next.samples.length
+    && current.samples.every((sample, index) => sample.t === next.samples[index].t && sample.left === next.samples[index].left);
 }
 
 function raceResult(text: Copy, opponent: { name: string; seconds: number }, time: number): string {

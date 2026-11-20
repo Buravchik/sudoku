@@ -579,11 +579,30 @@ async function handleMatchState(req: http.IncomingMessage, res: http.ServerRespo
       total?: unknown;
       seconds?: unknown;
       samples?: unknown;
+      look?: unknown;
     };
     const signed = readSignedInitData(typeof body.initData === 'string' ? body.initData : '', token);
     const id = matchIdFrom(signed?.startParam, body.matchId);
     if (!signed || !id) {
       sendJson(res, 401, { ok: false });
+      return;
+    }
+    if (body.look === true) {
+      const match = await readMatch(id);
+      if (!match) {
+        sendJson(res, 404, { ok: false });
+        return;
+      }
+      const view = toMatchView(match, signed.userId);
+      sendJson(res, 200, {
+        ok: true,
+        difficulty: view.difficulty,
+        level: view.level,
+        leader: view.leader,
+        settings: view.settings,
+        players: view.players,
+        rival: view.rival,
+      });
       return;
     }
     const noted = await noteMatchPlayer(id, signed.userId, signed.name, {
@@ -636,7 +655,8 @@ async function handleMatchResult(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
     if (update) await editInlineMatch(update.match);
-    sendJson(res, 200, { ok: true, improved: update.improved });
+    const view = toMatchView(update.match, signed.userId);
+    sendJson(res, 200, { ok: true, improved: update.improved, leader: view.leader, rival: view.rival });
   } catch (error) {
     console.error('Failed to record an inline result.', error);
     sendJson(res, 500, { ok: false });

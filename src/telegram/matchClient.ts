@@ -28,6 +28,8 @@ export interface MatchProgress {
   total?: number;
   seconds?: number;
   samples?: PaceSample[];
+  look?: boolean;
+  matchId?: string;
 }
 
 function endpoint(suffix: string): string | null {
@@ -45,7 +47,8 @@ export async function fetchMatchState(progress: MatchProgress = {}): Promise<Mat
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         initData,
-        matchId: readStartParam(),
+        matchId: progress.matchId ?? readStartParam(),
+        look: progress.look === true,
         settings: progress.settings,
         forfeit: progress.forfeit === true,
         left: progress.left,
@@ -68,7 +71,7 @@ export async function fetchMatchState(progress: MatchProgress = {}): Promise<Mat
     return {
       difficulty: payload.difficulty,
       level: payload.level,
-      leader: payload.leader ?? null,
+      leader: readRival(payload.leader),
       settings: readSettingsSnapshot(payload.settings),
       players: readPlayers(payload.players),
       rival: readRival(payload.rival),
@@ -100,17 +103,26 @@ function readRival(value: unknown): LiveRival | null {
   return { name: rival.name, seconds: rival.seconds, total: rival.total, samples };
 }
 
-export async function reportMatchResult(seconds: number, samples: PaceSample[], total: number): Promise<void> {
+export async function reportMatchResult(
+  seconds: number,
+  samples: PaceSample[],
+  total: number,
+): Promise<{ leader: LiveRival | null; rival: LiveRival | null } | null> {
   const url = endpoint('/match/result');
   const initData = window.Telegram?.WebApp?.initData;
-  if (!url || !initData) return;
+  if (!url || !initData) return null;
   try {
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData, matchId: readStartParam(), seconds, total, samples: compactPaceForSend(samples) }),
     });
+    if (!response.ok) return null;
+    const payload = await response.json() as { ok?: boolean; leader?: unknown; rival?: unknown };
+    if (!payload.ok) return null;
+    return { leader: readRival(payload.leader), rival: readRival(payload.rival) };
   } catch (error) {
     console.error('Failed to record the shared result.', error);
+    return null;
   }
 }

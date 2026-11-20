@@ -18,6 +18,8 @@ export interface MatchEntry {
   seconds: number;
   startedAt?: number;
   settings?: GameSettingsType;
+  total?: number;
+  samples?: PaceSample[];
 }
 
 export interface MatchLeader {
@@ -98,7 +100,7 @@ export function toMatchView(match: StoredMatch, userId: number): MatchView {
       : null,
     settings: match.settings ?? null,
     players: matchPlayers(match, userId),
-    rival: matchRival(match, userId, you?.elapsed ?? 0),
+    rival: matchRival(match, userId, you?.elapsed ?? 0) ?? finishedRival(match, userId),
   };
 }
 
@@ -232,6 +234,8 @@ function applyResult(
   const presence = match.present?.find(player => player.userId === userId);
   const current = match.entries.find(entry => entry.userId === userId);
   const improved = !current || seconds < current.seconds;
+  const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
+  const paceFields = samples && pace ? { total: pace.total, samples } : {};
   if (!current) {
     match.entries.push({
       userId,
@@ -239,17 +243,21 @@ function applyResult(
       seconds,
       ...(presence?.startedAt ? { startedAt: presence.startedAt } : {}),
       ...(presence?.settings ? { settings: presence.settings } : {}),
+      ...paceFields,
     });
   } else if (improved) {
     current.seconds = seconds;
     current.name = name;
     current.startedAt ??= presence?.startedAt;
     if (!current.settings && presence?.settings) current.settings = presence.settings;
+    if (paceFields.samples) {
+      current.total = paceFields.total;
+      current.samples = paceFields.samples;
+    }
   }
   match.entries.sort((left, right) => left.seconds - right.seconds || left.userId - right.userId);
   match.present = (match.present ?? []).filter(player => player.userId !== userId);
   if (match.entries[0]?.userId === userId && improved) {
-    const samples = pace ? sanitizePace(pace.samples, pace.total, seconds) : null;
     if (samples && pace) match.leader = { userId, name, seconds, total: pace.total, samples };
     else delete match.leader;
   }
@@ -387,6 +395,17 @@ function matchPlayers(match: StoredMatch, userId: number): MatchPlayerView[] {
     .filter(player => player.userId !== userId && !player.forfeited && typeof player.left === 'number' && typeof player.total === 'number')
     .map(player => ({ name: player.name, left: player.left ?? 0, total: player.total ?? 0, finished: false }))
     .sort((left, right) => pacePercent(right.total, right.left) - pacePercent(left.total, left.left) || left.name.localeCompare(right.name));
+}
+
+function finishedRival(
+  match: StoredMatch,
+  userId: number,
+): { name: string; seconds: number; total: number; samples: PaceSample[] } | null {
+  const other = match.entries
+    .filter(entry => entry.userId !== userId && entry.samples && entry.samples.length > 0 && typeof entry.total === 'number')
+    .sort((left, right) => left.seconds - right.seconds)[0];
+  if (!other?.samples || typeof other.total !== 'number') return null;
+  return { name: other.name, seconds: other.seconds, total: other.total, samples: other.samples };
 }
 
 function matchRival(

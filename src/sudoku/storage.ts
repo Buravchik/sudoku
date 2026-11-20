@@ -4,7 +4,7 @@ import { GameSettingsType } from '@/types';
 import { DailyChallenge, buildStartParam, parseStartParam } from './daily';
 import { parseMatchId } from './match';
 import { GhostRace, restoreGhost } from './duel';
-import { PaceSample, restorePace } from './pace';
+import { PaceSample, restorePace, sanitizePace } from './pace';
 import { ScoreMark, restoreMarks } from './score';
 import { Digit, GlobalGameState, LoadedPuzzle, SudokuCell, SudokuGuruDifficulty } from './types';
 
@@ -34,6 +34,13 @@ export function usualSettings(settings: Partial<GameSettingsType>): boolean {
   );
 }
 
+export interface StoredRival {
+  name: string;
+  seconds: number;
+  total: number;
+  samples: PaceSample[];
+}
+
 export interface StoredSession {
   gameState: GlobalGameState;
   difficultyState: SudokuGuruDifficulty | '';
@@ -43,6 +50,7 @@ export interface StoredSession {
   pace: PaceSample[];
   ghost: GhostRace | null;
   matchId: string | null;
+  rival: StoredRival | null;
   mistakes: number;
   marks: ScoreMark[];
 }
@@ -56,6 +64,7 @@ const EMPTY_SESSION: StoredSession = {
   pace: [],
   ghost: null,
   matchId: null,
+  rival: null,
   mistakes: 0,
   marks: [],
 };
@@ -133,6 +142,7 @@ export function sessionFromJson(raw: string | null): StoredSession | null {
       pace: restorePace(parsed.pace),
       ghost: restoreGhost(parsed.ghost),
       matchId: parseMatchId(typeof parsed.matchId === 'string' ? `i${parsed.matchId}` : null),
+      rival: restoreRival(parsed.rival),
       mistakes: restoredMistakes(parsed.mistakes),
       marks: restoreMarks(parsed.marks),
     };
@@ -174,6 +184,7 @@ export function saveStoredSession(session: StoredSession): void {
     pace: session.pace,
     ghost: session.ghost,
     matchId: session.matchId,
+    rival: session.rival,
     mistakes: session.mistakes,
     marks: session.marks,
     boardState: {
@@ -230,6 +241,7 @@ interface StoredGameState {
   pace?: unknown;
   ghost?: unknown;
   matchId?: unknown;
+  rival?: unknown;
   mistakes?: unknown;
   marks?: unknown;
   boardState: {
@@ -245,6 +257,17 @@ interface StoredCell {
   userValue: Digit;
   solutionValue: Digit;
   draftValues: boolean[];
+}
+
+function restoreRival(value: unknown): StoredRival | null {
+  if (!value || typeof value !== 'object') return null;
+  const rival = value as { name?: unknown; seconds?: unknown; total?: unknown; samples?: unknown };
+  if (typeof rival.name !== 'string' || rival.name.trim() === '') return null;
+  if (!Number.isInteger(rival.seconds) || !Number.isInteger(rival.total)) return null;
+  if ((rival.seconds as number) < 0 || (rival.total as number) < 1) return null;
+  const samples = sanitizePace(rival.samples, rival.total as number, rival.seconds as number);
+  if (!samples) return null;
+  return { name: rival.name.slice(0, 32), seconds: rival.seconds as number, total: rival.total as number, samples };
 }
 
 function restoreBoard(value: unknown): LoadedPuzzle | null {
